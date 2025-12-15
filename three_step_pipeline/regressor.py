@@ -27,9 +27,8 @@ spot.index = pd.to_datetime(spot.index)
 future.index = pd.to_datetime(future.index)
 funding.index = pd.to_datetime(funding.index)
 
-# ==========================================================
-# 3. REMOVE LAST 15 MINUTES BEFORE EACH FUNDING TIMESTAMP
-# ==========================================================
+#Remove data from 15 mins before funding rate
+
 fund_times = funding.index.sort_values()
 
 clean_spot_windows = {}
@@ -40,7 +39,7 @@ for i in range(1, len(fund_times)):
     t_curr = fund_times[i]
 
     window_start = t_prev
-    window_end = t_curr - pd.Timedelta(minutes=15)  # remove final 15m
+    window_end = t_curr - pd.Timedelta(minutes=30)  # remove final 15m
 
     spot_window = spot.loc[(spot.index >= window_start) & (spot.index < window_end)]
     fut_window = future.loc[(future.index >= window_start) & (future.index < window_end)]
