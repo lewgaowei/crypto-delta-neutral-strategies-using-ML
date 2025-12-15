@@ -1,8 +1,20 @@
-#%% [markdown]
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: title,incorrectly_encoded_metadata,-all
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.17.1
+# ---
+
+# %% [markdown]
 # Funding Rate Direction Prediction using Machine Learning
 # This script predicts whether the next funding rate will be positive or negative
 
-#%% Imports
+# %% Imports
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -28,7 +40,7 @@ import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-#%% Constants
+# %% Constants
 BASE_PATH = Path(__file__).parent
 
 FEATURE_COLS = [
@@ -64,7 +76,1031 @@ FEATURE_COLS = [
     'hour_of_day', 'day_of_week'
 ]
 
-#%% ============================================================
+# %% ============================================================
+# EDA VISUALIZATION FUNCTIONS
+# ============================================================
+
+def plot_feature_categories(save_path=None):
+    """Plot feature categories as a professional horizontal bar chart.
+
+    Args:
+        save_path: Optional path to save the figure
+    """
+    # Feature categories and counts
+    categories = {
+        'Basis Features': 14,
+        'Taker Imbalance': 6,
+        'Price Momentum': 7,
+        'Volume Features': 8,
+        'Funding Rate History': 3,
+        'Time Features': 2
+    }
+
+    names = list(categories.keys())
+    counts = list(categories.values())
+    total = sum(counts)
+
+    # Professional color palette
+    colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728', '#9467bd', '#17becf']
+
+    # Create figure with professional styling
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Create horizontal bar chart
+    bars = ax.barh(names, counts, color=colors, edgecolor='white', linewidth=0.7, height=0.6)
+
+    # Add count labels on bars
+    for bar, count in zip(bars, counts):
+        ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height()/2,
+                f'{count}', va='center', ha='left', fontsize=11, fontweight='bold', color='#333333')
+
+    # Styling
+    ax.set_xlabel('Number of Features', fontsize=12, fontweight='bold', color='#333333')
+    ax.set_title(f'Feature Engineering: {total} Features Across 6 Categories',
+                 fontsize=14, fontweight='bold', color='#333333', pad=15)
+    ax.invert_yaxis()
+    ax.set_xlim(0, max(counts) + 3)
+
+    # Professional grid and spines
+    ax.grid(axis='x', alpha=0.3, linestyle='--', color='#cccccc')
+    ax.set_axisbelow(True)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#cccccc')
+    ax.spines['bottom'].set_color('#cccccc')
+
+    # Tick styling
+    ax.tick_params(axis='both', colors='#333333', labelsize=11)
+    ax.set_yticklabels(names, fontweight='medium')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    return fig
+
+
+def plot_model_prediction_metrics(model_name='LightGBM', base_path=BASE_PATH, save_path=None):
+    """Plot prediction accuracy metrics (Precision, Recall, F1, AUC) by symbol for a specific model.
+
+    Args:
+        model_name: Name of the model to filter (e.g., 'LightGBM', 'XGBoost', 'RandomForest')
+        base_path: Base path where results folder is located
+        save_path: Optional path to save the figure
+    """
+    # Load results CSV
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None
+
+    df_results = pd.read_csv(results_path)
+
+    # Filter by model name
+    df_model = df_results[df_results['model'] == model_name].copy()
+
+    if len(df_model) == 0:
+        print(f"No results found for model: {model_name}")
+        print(f"Available models: {df_results['model'].unique().tolist()}")
+        return None
+
+    # Get latest result per symbol (in case of duplicates)
+    df_model = df_model.sort_values('timestamp').groupby('symbol').last().reset_index()
+
+    # Sort by F1 score descending
+    df_model = df_model.sort_values('test_f1', ascending=True)
+
+    symbols = df_model['symbol'].values
+    n_symbols = len(symbols)
+
+    # Metrics to plot (including Accuracy)
+    metrics = ['test_accuracy', 'test_precision', 'test_recall', 'test_f1', 'test_roc_auc']
+    metric_labels = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'ROC-AUC']
+    # Professional color palette - muted tones (Accuracy in orange for distinction)
+    colors = ['#E67E22', '#1B4F72', '#2874A6', '#148F77', '#7D3C98']
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, max(6, n_symbols * 0.5)))
+
+    # Bar positions
+    y_pos = np.arange(n_symbols)
+    bar_height = 0.15  # Slightly smaller for 5 metrics
+
+    # Plot each metric as grouped horizontal bars
+    for i, (metric, label, color) in enumerate(zip(metrics, metric_labels, colors)):
+        values = df_model[metric].values
+        offset = (i - 2) * bar_height  # Adjusted for 5 metrics: -2, -1, 0, 1, 2
+        bars = ax.barh(y_pos + offset, values, bar_height, label=label, color=color, alpha=0.8, edgecolor='white')
+
+        # Add value labels
+        for bar, val in zip(bars, values):
+            ax.text(val + 0.01, bar.get_y() + bar.get_height()/2, f'{val:.2f}',
+                   va='center', ha='left', fontsize=8, color='#333333')
+
+    # Styling
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(symbols, fontsize=10)
+    ax.set_xlabel('Score', fontsize=12, fontweight='bold')
+    ax.set_title(f'{model_name} - Prediction Metrics by Symbol', fontsize=14, fontweight='bold', pad=15)
+    ax.set_xlim(0, 1.15)
+    ax.axvline(x=0.5, color='gray', linestyle='--', alpha=0.5, label='Baseline (0.5)')
+    ax.legend(loc='lower right', fontsize=9)
+    ax.grid(axis='x', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    return fig, df_model
+
+
+def plot_model_backtest_returns(model_name='LightGBM', base_path=BASE_PATH, save_path=None):
+    """Plot backtest returns (Total PnL, Avg PnL, Win Rate) by symbol for a specific model.
+
+    Args:
+        model_name: Name of the model to filter (e.g., 'LightGBM', 'XGBoost', 'RandomForest')
+        base_path: Base path where results folder is located
+        save_path: Optional path to save the figure
+    """
+    # Load results CSV
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None
+
+    df_results = pd.read_csv(results_path)
+
+    # Filter by model name
+    df_model = df_results[df_results['model'] == model_name].copy()
+
+    if len(df_model) == 0:
+        print(f"No results found for model: {model_name}")
+        print(f"Available models: {df_results['model'].unique().tolist()}")
+        return None
+
+    # Get latest result per symbol (in case of duplicates)
+    df_model = df_model.sort_values('timestamp').groupby('symbol').last().reset_index()
+
+    # Sort by total PnL descending
+    df_model = df_model.sort_values('total_pnl_pct', ascending=True)
+
+    symbols = df_model['symbol'].values
+    n_symbols = len(symbols)
+
+    # Create figure with 3 subplots - wider for better readability
+    fig, axes = plt.subplots(1, 3, figsize=(22, max(6, n_symbols * 0.5)))
+
+    # Professional color palette
+    color_positive = '#1D5B79'  # Deep teal for positive
+    color_negative = '#A94438'  # Muted red for negative
+    color_above_baseline = '#1D5B79'  # Deep teal for above 50%
+    color_below_baseline = '#C27B41'  # Muted orange for below 50%
+
+    # Plot 1: Total PnL %
+    ax1 = axes[0]
+    colors1 = [color_positive if x >= 0 else color_negative for x in df_model['total_pnl_pct']]
+    bars1 = ax1.barh(symbols, df_model['total_pnl_pct'], color=colors1, alpha=0.85, edgecolor='white', linewidth=0.5)
+    ax1.axvline(x=0, color='black', linestyle='-', linewidth=1)
+    ax1.set_xlabel('Total PnL (%)', fontsize=11, fontweight='bold')
+    ax1.set_title('Total PnL by Symbol', fontsize=12, fontweight='bold')
+    ax1.grid(axis='x', alpha=0.3)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    # Add value labels
+    for bar, val in zip(bars1, df_model['total_pnl_pct']):
+        x_pos = val + 0.5 if val >= 0 else val - 0.5
+        ha = 'left' if val >= 0 else 'right'
+        ax1.text(x_pos, bar.get_y() + bar.get_height()/2, f'{val:.2f}%',
+                va='center', ha=ha, fontsize=9, fontweight='bold')
+
+    # Plot 2: Avg PnL per Trade %
+    ax2 = axes[1]
+    colors2 = [color_positive if x >= 0 else color_negative for x in df_model['avg_pnl_pct']]
+    bars2 = ax2.barh(symbols, df_model['avg_pnl_pct'], color=colors2, alpha=0.85, edgecolor='white', linewidth=0.5)
+    ax2.axvline(x=0, color='black', linestyle='-', linewidth=1)
+    ax2.set_xlabel('Avg PnL per Trade (%)', fontsize=11, fontweight='bold')
+    ax2.set_title('Avg PnL per Trade', fontsize=12, fontweight='bold')
+    ax2.grid(axis='x', alpha=0.3)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    ax2.set_yticklabels([])  # Hide y-labels for middle plot
+    for bar, val in zip(bars2, df_model['avg_pnl_pct']):
+        x_pos = val + 0.02 if val >= 0 else val - 0.02
+        ha = 'left' if val >= 0 else 'right'
+        ax2.text(x_pos, bar.get_y() + bar.get_height()/2, f'{val:.3f}%',
+                va='center', ha=ha, fontsize=9, fontweight='bold')
+
+    # Plot 3: Win Rate %
+    ax3 = axes[2]
+    win_rates = df_model['win_rate'] * 100  # Convert to percentage
+    colors3 = [color_above_baseline if x >= 50 else color_below_baseline for x in win_rates]
+    bars3 = ax3.barh(symbols, win_rates, color=colors3, alpha=0.85, edgecolor='white', linewidth=0.5)
+    ax3.axvline(x=50, color='gray', linestyle='--', linewidth=1.5, label='50% Baseline')
+    ax3.set_xlabel('Win Rate (%)', fontsize=11, fontweight='bold')
+    ax3.set_title('Win Rate by Symbol', fontsize=12, fontweight='bold')
+    ax3.set_xlim(0, 100)
+    ax3.grid(axis='x', alpha=0.3)
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    ax3.set_yticklabels([])  # Hide y-labels for right plot
+    ax3.legend(loc='lower right', fontsize=9)
+    for bar, val in zip(bars3, win_rates):
+        ax3.text(val + 1, bar.get_y() + bar.get_height()/2, f'{val:.1f}%',
+                va='center', ha='left', fontsize=9, fontweight='bold')
+
+    # Overall title
+    fig.suptitle(f'{model_name} - Backtest Performance Summary', fontsize=14, fontweight='bold', y=1.02)
+    fig.patch.set_facecolor('white')
+    for ax in axes:
+        ax.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print summary statistics
+    print(f"\n{'='*60}")
+    print(f"{model_name} BACKTEST SUMMARY")
+    print('='*60)
+    print(f"Total Symbols: {n_symbols}")
+    print(f"Avg Total PnL: {df_model['total_pnl_pct'].mean():.4f}%")
+    print(f"Avg Win Rate: {df_model['win_rate'].mean()*100:.2f}%")
+    print(f"Best Symbol: {df_model.iloc[-1]['symbol']} ({df_model.iloc[-1]['total_pnl_pct']:.2f}% PnL)")
+    print(f"Worst Symbol: {df_model.iloc[0]['symbol']} ({df_model.iloc[0]['total_pnl_pct']:.2f}% PnL)")
+
+    return fig, df_model
+
+
+# ============================================================
+# ML MODEL COMPARISON FUNCTIONS (ALL MODELS)
+# ============================================================
+
+def compare_all_models_metrics(base_path=BASE_PATH, save_path=None):
+    """Compare prediction metrics across all ML models with grouped bar chart.
+
+    Returns:
+        fig: matplotlib figure
+        df_summary: DataFrame with aggregated metrics per model
+    """
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None, None
+
+    df_results = pd.read_csv(results_path)
+
+    # Get latest result per symbol-model combination
+    df_latest = df_results.sort_values('timestamp').groupby(['symbol', 'model']).last().reset_index()
+
+    # Calculate mean metrics per model across all symbols
+    metrics = ['test_accuracy', 'test_precision', 'test_recall', 'test_f1', 'test_roc_auc']
+    metric_labels = ['Accuracy', 'Precision', 'Recall', 'F1 Score', 'ROC-AUC']
+
+    df_summary = df_latest.groupby('model')[metrics].mean().reset_index()
+    df_summary = df_summary.sort_values('test_f1', ascending=False)
+
+    models = df_summary['model'].values
+    n_models = len(models)
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    # Bar positions
+    x = np.arange(n_models)
+    width = 0.15
+    colors = ['#E67E22', '#1B4F72', '#2874A6', '#148F77', '#7D3C98']
+
+    # Plot each metric
+    for i, (metric, label, color) in enumerate(zip(metrics, metric_labels, colors)):
+        values = df_summary[metric].values
+        offset = (i - 2) * width
+        bars = ax.bar(x + offset, values, width, label=label, color=color, alpha=0.85, edgecolor='white')
+
+        # Add value labels on top
+        for bar, val in zip(bars, values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, f'{val:.2f}',
+                   ha='center', va='bottom', fontsize=7, rotation=45)
+
+    # Styling
+    ax.set_xticks(x)
+    ax.set_xticklabels(models, rotation=45, ha='right', fontsize=10)
+    ax.set_ylabel('Score', fontsize=12, fontweight='bold')
+    ax.set_title('ML Model Comparison - Prediction Metrics (Averaged Across All Tickers)',
+                fontsize=14, fontweight='bold', pad=15)
+    ax.set_ylim(0, 1.15)
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5, label='Baseline (0.5)')
+    ax.legend(loc='upper right', fontsize=9, ncol=2)
+    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print ranking
+    print(f"\n{'='*60}")
+    print("MODEL RANKING BY F1 SCORE")
+    print('='*60)
+    for i, row in df_summary.iterrows():
+        print(f"{row['model']:20s} | F1: {row['test_f1']:.4f} | ROC-AUC: {row['test_roc_auc']:.4f}")
+
+    return fig, df_summary
+
+
+def compare_all_models_returns(base_path=BASE_PATH, save_path=None):
+    """Compare backtest returns across all ML models.
+
+    Returns:
+        fig: matplotlib figure
+        df_summary: DataFrame with aggregated returns per model
+    """
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None, None
+
+    df_results = pd.read_csv(results_path)
+
+    # Get latest result per symbol-model combination
+    df_latest = df_results.sort_values('timestamp').groupby(['symbol', 'model']).last().reset_index()
+
+    # Calculate aggregated returns per model (SUM of total_pnl across all tickers)
+    df_summary = df_latest.groupby('model').agg({
+        'total_pnl_pct': 'sum',  # Total PnL aggregated across all tickers
+        'avg_pnl_pct': 'mean',   # Average of avg PnL per trade
+        'win_rate': 'mean',      # Average win rate
+        'n_trades': 'sum'        # Total trades across all tickers
+    }).reset_index()
+
+    df_summary = df_summary.sort_values('total_pnl_pct', ascending=True)
+
+    models = df_summary['model'].values
+    n_models = len(models)
+
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(1, 3, figsize=(20, 8))
+
+    color_positive = '#1D5B79'
+    color_negative = '#A94438'
+    color_above_baseline = '#1D5B79'
+    color_below_baseline = '#C27B41'
+
+    # Plot 1: Total PnL % (Aggregated)
+    ax1 = axes[0]
+    colors1 = [color_positive if x >= 0 else color_negative for x in df_summary['total_pnl_pct']]
+    bars1 = ax1.barh(models, df_summary['total_pnl_pct'], color=colors1, alpha=0.85, edgecolor='white')
+    ax1.axvline(x=0, color='black', linestyle='-', linewidth=1)
+    ax1.set_xlabel('Total PnL (%) - All Tickers Combined', fontsize=11, fontweight='bold')
+    ax1.set_title('Aggregated Total PnL', fontsize=12, fontweight='bold')
+    ax1.grid(axis='x', alpha=0.3)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    for bar, val in zip(bars1, df_summary['total_pnl_pct']):
+        x_pos = val + 2 if val >= 0 else val - 2
+        ha = 'left' if val >= 0 else 'right'
+        ax1.text(x_pos, bar.get_y() + bar.get_height()/2, f'{val:.1f}%',
+                va='center', ha=ha, fontsize=10, fontweight='bold')
+
+    # Plot 2: Avg PnL per Trade %
+    ax2 = axes[1]
+    colors2 = [color_positive if x >= 0 else color_negative for x in df_summary['avg_pnl_pct']]
+    bars2 = ax2.barh(models, df_summary['avg_pnl_pct'], color=colors2, alpha=0.85, edgecolor='white')
+    ax2.axvline(x=0, color='black', linestyle='-', linewidth=1)
+    ax2.set_xlabel('Avg PnL per Trade (%)', fontsize=11, fontweight='bold')
+    ax2.set_title('Avg PnL per Trade (Mean Across Tickers)', fontsize=12, fontweight='bold')
+    ax2.grid(axis='x', alpha=0.3)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    ax2.set_yticklabels([])
+    for bar, val in zip(bars2, df_summary['avg_pnl_pct']):
+        x_pos = val + 0.02 if val >= 0 else val - 0.02
+        ha = 'left' if val >= 0 else 'right'
+        ax2.text(x_pos, bar.get_y() + bar.get_height()/2, f'{val:.3f}%',
+                va='center', ha=ha, fontsize=10, fontweight='bold')
+
+    # Plot 3: Win Rate %
+    ax3 = axes[2]
+    win_rates = df_summary['win_rate'] * 100
+    colors3 = [color_above_baseline if x >= 50 else color_below_baseline for x in win_rates]
+    bars3 = ax3.barh(models, win_rates, color=colors3, alpha=0.85, edgecolor='white')
+    ax3.axvline(x=50, color='gray', linestyle='--', linewidth=1.5, label='50% Baseline')
+    ax3.set_xlabel('Win Rate (%)', fontsize=11, fontweight='bold')
+    ax3.set_title('Avg Win Rate Across Tickers', fontsize=12, fontweight='bold')
+    ax3.set_xlim(0, 100)
+    ax3.grid(axis='x', alpha=0.3)
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    ax3.set_yticklabels([])
+    ax3.legend(loc='lower right', fontsize=9)
+    for bar, val in zip(bars3, win_rates):
+        ax3.text(val + 1, bar.get_y() + bar.get_height()/2, f'{val:.1f}%',
+                va='center', ha='left', fontsize=10, fontweight='bold')
+
+    fig.suptitle('ML Model Comparison - Backtest Performance (Aggregated Across All Tickers)',
+                fontsize=14, fontweight='bold', y=1.02)
+    fig.patch.set_facecolor('white')
+    for ax in axes:
+        ax.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print summary
+    print(f"\n{'='*70}")
+    print("MODEL RANKING BY AGGREGATED TOTAL PnL")
+    print('='*70)
+    df_sorted = df_summary.sort_values('total_pnl_pct', ascending=False)
+    for _, row in df_sorted.iterrows():
+        print(f"{row['model']:20s} | Total PnL: {row['total_pnl_pct']:8.2f}% | "
+              f"Trades: {int(row['n_trades']):5d} | Win Rate: {row['win_rate']*100:5.1f}%")
+
+    return fig, df_summary
+
+
+def compare_all_models_heatmap(base_path=BASE_PATH, save_path=None):
+    """Create a heatmap showing model performance across all tickers and metrics.
+
+    Returns:
+        fig: matplotlib figure
+        df_pivot: DataFrame with pivoted data
+    """
+    import seaborn as sns
+
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None, None
+
+    df_results = pd.read_csv(results_path)
+    df_latest = df_results.sort_values('timestamp').groupby(['symbol', 'model']).last().reset_index()
+
+    # Create pivot tables for different metrics
+    fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+
+    # Heatmap 1: Total PnL by Model x Symbol
+    ax1 = axes[0, 0]
+    df_pivot1 = df_latest.pivot(index='model', columns='symbol', values='total_pnl_pct')
+    sns.heatmap(df_pivot1, annot=True, fmt='.1f', cmap='RdYlGn', center=0, ax=ax1,
+               cbar_kws={'label': 'Total PnL (%)'}, annot_kws={'size': 8})
+    ax1.set_title('Total PnL (%) by Model x Ticker', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('')
+    ax1.set_ylabel('Model', fontsize=10)
+
+    # Heatmap 2: F1 Score by Model x Symbol
+    ax2 = axes[0, 1]
+    df_pivot2 = df_latest.pivot(index='model', columns='symbol', values='test_f1')
+    sns.heatmap(df_pivot2, annot=True, fmt='.2f', cmap='Blues', ax=ax2,
+               cbar_kws={'label': 'F1 Score'}, annot_kws={'size': 8})
+    ax2.set_title('F1 Score by Model x Ticker', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('')
+    ax2.set_ylabel('')
+
+    # Heatmap 3: Win Rate by Model x Symbol
+    ax3 = axes[1, 0]
+    df_pivot3 = df_latest.pivot(index='model', columns='symbol', values='win_rate') * 100
+    sns.heatmap(df_pivot3, annot=True, fmt='.1f', cmap='RdYlGn', center=50, ax=ax3,
+               cbar_kws={'label': 'Win Rate (%)'}, annot_kws={'size': 8})
+    ax3.set_title('Win Rate (%) by Model x Ticker', fontsize=12, fontweight='bold')
+    ax3.set_xlabel('Symbol', fontsize=10)
+    ax3.set_ylabel('Model', fontsize=10)
+
+    # Heatmap 4: ROC-AUC by Model x Symbol
+    ax4 = axes[1, 1]
+    df_pivot4 = df_latest.pivot(index='model', columns='symbol', values='test_roc_auc')
+    sns.heatmap(df_pivot4, annot=True, fmt='.2f', cmap='Purples', ax=ax4,
+               cbar_kws={'label': 'ROC-AUC'}, annot_kws={'size': 8})
+    ax4.set_title('ROC-AUC by Model x Ticker', fontsize=12, fontweight='bold')
+    ax4.set_xlabel('Symbol', fontsize=10)
+    ax4.set_ylabel('')
+
+    fig.suptitle('ML Model Performance Heatmaps - All Tickers', fontsize=14, fontweight='bold', y=1.01)
+    fig.patch.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    return fig, df_pivot1
+
+
+def get_trade_date_range(base_path=BASE_PATH):
+    """Get the start and end dates of trades for all models.
+
+    Returns:
+        dict: Dictionary with model names as keys and (start_date, end_date, n_trades) as values
+    """
+    results_path = base_path / 'results'
+    trade_files = list(results_path.glob('*_trades.csv'))
+
+    if not trade_files:
+        print("No trade files found")
+        return None
+
+    date_ranges = {}
+    all_trades = []
+
+    for trade_file in trade_files:
+        parts = trade_file.stem.split('_')
+        if len(parts) >= 2:
+            symbol = parts[0]
+            model = '_'.join(parts[1:-1]) if len(parts) > 2 else parts[1]
+            model = model.replace('_trades', '')
+
+        try:
+            df = pd.read_csv(trade_file)
+            if 'funding_time' in df.columns:
+                df['funding_time'] = pd.to_datetime(df['funding_time'])
+                start_date = df['funding_time'].min()
+                end_date = df['funding_time'].max()
+
+                key = f"{symbol}_{model}"
+                date_ranges[key] = {
+                    'symbol': symbol,
+                    'model': model,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'n_trades': len(df)
+                }
+                all_trades.append(df['funding_time'])
+        except Exception as e:
+            print(f"Error reading {trade_file}: {e}")
+
+    # Get overall date range
+    if all_trades:
+        all_dates = pd.concat(all_trades)
+        overall_start = all_dates.min()
+        overall_end = all_dates.max()
+
+        print(f"\n{'='*70}")
+        print("TRADE DATE RANGE SUMMARY")
+        print('='*70)
+        print(f"Overall Test Period: {overall_start.strftime('%Y-%m-%d %H:%M')} to {overall_end.strftime('%Y-%m-%d %H:%M')}")
+        print(f"Total Duration: {(overall_end - overall_start).days} days")
+        print(f"\nFirst Trade: {overall_start}")
+        print(f"Last Trade:  {overall_end}")
+
+        # Summary by model
+        print(f"\n{'='*70}")
+        print("DATE RANGE BY MODEL")
+        print('='*70)
+        df_ranges = pd.DataFrame(date_ranges).T
+        model_summary = df_ranges.groupby('model').agg({
+            'start_date': 'min',
+            'end_date': 'max',
+            'n_trades': 'sum'
+        })
+
+        for model, row in model_summary.iterrows():
+            print(f"{model:20s} | {row['start_date'].strftime('%Y-%m-%d')} to {row['end_date'].strftime('%Y-%m-%d')} | {int(row['n_trades'])} trades")
+
+    return date_ranges
+
+
+def compare_cumulative_returns(base_path=BASE_PATH, save_path=None):
+    """Plot cumulative returns over time for each model (aggregated across tickers).
+
+    Returns:
+        fig: matplotlib figure
+        df_cumulative: DataFrame with cumulative returns
+    """
+    results_path = base_path / 'results'
+    trade_files = list(results_path.glob('*_trades.csv'))
+
+    if not trade_files:
+        print("No trade files found")
+        return None, None
+
+    # Load and combine all trades
+    all_trades = []
+    for trade_file in trade_files:
+        parts = trade_file.stem.split('_')
+        if len(parts) >= 2:
+            symbol = parts[0]
+            model = parts[1]
+
+        try:
+            df = pd.read_csv(trade_file)
+            df['symbol'] = symbol
+            df['model'] = model
+            df['funding_time'] = pd.to_datetime(df['funding_time'])
+            all_trades.append(df[['funding_time', 'symbol', 'model', 'net_pnl_pct']])
+        except Exception as e:
+            continue
+
+    if not all_trades:
+        print("No valid trade data found")
+        return None, None
+
+    df_all = pd.concat(all_trades, ignore_index=True)
+
+    # Get unique models
+    models = df_all['model'].unique()
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(18, 8))
+
+    # Color palette
+    colors = plt.cm.tab10(np.linspace(0, 1, len(models)))
+
+    for model, color in zip(sorted(models), colors):
+        df_model = df_all[df_all['model'] == model].copy()
+
+        # Group by date and sum PnL across all tickers
+        df_model = df_model.groupby('funding_time')['net_pnl_pct'].sum().reset_index()
+        df_model = df_model.sort_values('funding_time')
+
+        # Calculate cumulative return
+        df_model['cumulative_pnl'] = df_model['net_pnl_pct'].cumsum()
+
+        ax.plot(df_model['funding_time'], df_model['cumulative_pnl'],
+               label=model, color=color, linewidth=2, alpha=0.8)
+
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=1)
+    ax.set_xlabel('Date', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Cumulative PnL (%)', fontsize=12, fontweight='bold')
+    ax.set_title('Cumulative Returns by Model (Aggregated Across All Tickers)',
+                fontsize=14, fontweight='bold', pad=15)
+    ax.legend(loc='upper left', fontsize=9, ncol=2)
+    ax.grid(True, alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+
+    # Format x-axis
+    fig.autofmt_xdate()
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    return fig, df_all
+
+
+def compare_prediction_accuracy(base_path=BASE_PATH, save_path=None):
+    """Compare prediction accuracy across all ML models.
+
+    Prediction accuracy = % of trades where the model correctly predicted extreme negative FR.
+
+    Returns:
+        fig: matplotlib figure
+        df_summary: DataFrame with prediction accuracy per model
+    """
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None, None
+
+    df_results = pd.read_csv(results_path)
+
+    # Get latest result per symbol-model combination
+    df_latest = df_results.sort_values('timestamp').groupby(['symbol', 'model']).last().reset_index()
+
+    # Calculate mean prediction accuracy per model
+    df_summary = df_latest.groupby('model').agg({
+        'prediction_accuracy': 'mean',
+        'n_trades': 'sum'
+    }).reset_index()
+    df_summary = df_summary.sort_values('prediction_accuracy', ascending=True)
+
+    models = df_summary['model'].values
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(17, 8))
+
+    # Color scheme
+    color_high = '#1D8348'
+    color_mid = '#F39C12'
+    color_low = '#A93226'
+
+    # Prediction Accuracy by Model (horizontal bar)
+    colors1 = []
+    for acc in df_summary['prediction_accuracy']:
+        if acc >= 0.7:
+            colors1.append(color_high)
+        elif acc >= 0.5:
+            colors1.append(color_mid)
+        else:
+            colors1.append(color_low)
+
+    bars = ax.barh(models, df_summary['prediction_accuracy'] * 100, color=colors1, alpha=0.85, edgecolor='white')
+    ax.axvline(x=50, color='black', linestyle='--', linewidth=1, alpha=0.5, label='50% baseline')
+    ax.set_xlabel('Prediction Accuracy (%)', fontsize=11, fontweight='bold')
+    ax.set_title('Average Prediction Accuracy by Model\n(When model signals, % of correct extreme neg predictions)',
+                  fontsize=12, fontweight='bold')
+    ax.set_xlim(0, 100)
+    ax.grid(axis='x', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.legend(loc='lower right')
+
+    # Add value labels
+    for bar, val, n_trades in zip(bars, df_summary['prediction_accuracy'], df_summary['n_trades']):
+        ax.text(val * 100 + 1, bar.get_y() + bar.get_height()/2,
+                f'{val*100:.1f}% ({int(n_trades)} trades)',
+                ha='left', va='center', fontsize=9)
+
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    return fig, df_summary
+
+
+def print_model_summary(base_path=BASE_PATH):
+    """Print a summary table of all ML models with key performance metrics.
+
+    Prints: Win Rate, Total PnL, Avg PnL per Trade, Prediction Accuracy, N Trades
+
+    Returns:
+        df_summary: DataFrame with summary statistics per model
+    """
+    results_path = base_path / 'results' / 'backtest_comparison_summary.csv'
+    if not results_path.exists():
+        print(f"Results file not found: {results_path}")
+        return None
+
+    df_results = pd.read_csv(results_path)
+
+    # Get latest result per symbol-model combination
+    df_latest = df_results.sort_values('timestamp').groupby(['symbol', 'model']).last().reset_index()
+
+    # Aggregate by model
+    df_summary = df_latest.groupby('model').agg({
+        'total_pnl_pct': 'sum',           # Total PnL across all tickers
+        'avg_pnl_pct': 'mean',            # Average PnL per trade
+        'win_rate': 'mean',               # Average win rate
+        'prediction_accuracy': 'mean',    # Average prediction accuracy
+        'n_trades': 'sum'                 # Total trades
+    }).reset_index()
+
+    # Sort by total PnL descending
+    df_summary = df_summary.sort_values('total_pnl_pct', ascending=False).reset_index(drop=True)
+
+    # Print formatted table
+    print("\n" + "="*90)
+    print("ML MODEL PERFORMANCE SUMMARY")
+    print("="*90)
+    print(f"\n{'Model':<20} {'Total PnL':>12} {'Avg PnL/Trade':>14} {'Win Rate':>10} {'Pred Acc':>10} {'N Trades':>10}")
+    print("-"*90)
+
+    for _, row in df_summary.iterrows():
+        print(f"{row['model']:<20} "
+              f"{row['total_pnl_pct']:>11.2f}% "
+              f"{row['avg_pnl_pct']:>13.4f}% "
+              f"{row['win_rate']*100:>9.1f}% "
+              f"{row['prediction_accuracy']*100:>9.1f}% "
+              f"{int(row['n_trades']):>10}")
+
+    print("-"*90)
+
+    # Print averages
+    print(f"\n{'AVERAGE':<20} "
+          f"{df_summary['total_pnl_pct'].mean():>11.2f}% "
+          f"{df_summary['avg_pnl_pct'].mean():>13.4f}% "
+          f"{df_summary['win_rate'].mean()*100:>9.1f}% "
+          f"{df_summary['prediction_accuracy'].mean()*100:>9.1f}% "
+          f"{int(df_summary['n_trades'].mean()):>10}")
+
+    # Print best/worst
+    best_model = df_summary.iloc[0]
+    worst_model = df_summary.iloc[-1]
+
+    print(f"\n{'='*90}")
+    print(f"BEST MODEL:  {best_model['model']} with {best_model['total_pnl_pct']:.2f}% total PnL")
+    print(f"WORST MODEL: {worst_model['model']} with {worst_model['total_pnl_pct']:.2f}% total PnL")
+    print(f"{'='*90}\n")
+
+    return df_summary
+
+
+def plot_basis_vs_funding_rate(df_merged, symbol, save_path=None):
+    """Plot Basis vs Funding Rate scatter plot with correlation.
+
+    Args:
+        df_merged: Merged dataframe with 'basis' and 'fundingRate' columns
+        symbol: Trading pair symbol for title
+        save_path: Optional path to save the figure
+    """
+    # Get only funding events (rows with actual funding rate)
+    funding_events = df_merged[df_merged['fundingRate'].notna()].copy()
+
+    if len(funding_events) == 0:
+        print("No funding events found in data")
+        return None
+
+    # Calculate correlation
+    correlation = funding_events['basis'].corr(funding_events['fundingRate'])
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    # Scatter plot with color based on funding rate sign
+    colors = np.where(funding_events['fundingRate'] >= 0, '#2ca02c', '#d62728')
+    scatter = ax.scatter(
+        funding_events['basis'],
+        funding_events['fundingRate'] * 100,
+        c=colors,
+        alpha=0.6,
+        s=40,
+        edgecolor='white',
+        linewidth=0.5
+    )
+
+    # Add trend line
+    z = np.polyfit(funding_events['basis'], funding_events['fundingRate'] * 100, 1)
+    p = np.poly1d(z)
+    x_line = np.linspace(funding_events['basis'].min(), funding_events['basis'].max(), 100)
+    ax.plot(x_line, p(x_line), 'b--', linewidth=2, alpha=0.8, label=f'Trend Line')
+
+    # Reference lines
+    ax.axhline(y=0, color='#333333', linestyle='-', linewidth=1, alpha=0.5)
+    ax.axvline(x=0, color='#333333', linestyle='-', linewidth=1, alpha=0.5)
+
+    # Correlation annotation
+    ax.text(0.05, 0.95, f'Correlation: {correlation:.3f}',
+            transform=ax.transAxes, fontsize=12, fontweight='bold',
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='#cccccc', alpha=0.9))
+
+    # Labels and title
+    ax.set_xlabel('Basis (%)', fontsize=12, fontweight='bold', color='#333333')
+    ax.set_ylabel('Funding Rate (%)', fontsize=12, fontweight='bold', color='#333333')
+    ax.set_title(f'{symbol} - Basis vs Funding Rate Correlation',
+                 fontsize=14, fontweight='bold', color='#333333', pad=15)
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#2ca02c', markersize=10, label='Positive FR'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#d62728', markersize=10, label='Negative FR'),
+        Line2D([0], [0], color='b', linestyle='--', linewidth=2, label='Trend Line')
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=10)
+
+    # Styling
+    ax.grid(True, alpha=0.3, linestyle='--', color='#cccccc')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#cccccc')
+    ax.spines['bottom'].set_color('#cccccc')
+    ax.tick_params(axis='both', colors='#333333', labelsize=10)
+    ax.set_facecolor('white')
+    fig.patch.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print summary statistics
+    print(f"\n--- Basis vs Funding Rate Summary ---")
+    print(f"Total funding events: {len(funding_events)}")
+    print(f"Correlation: {correlation:.4f}")
+    print(f"Basis range: {funding_events['basis'].min():.4f}% to {funding_events['basis'].max():.4f}%")
+    print(f"FR range: {funding_events['fundingRate'].min()*100:.4f}% to {funding_events['fundingRate'].max()*100:.4f}%")
+
+    return fig
+
+
+def plot_target_variable_distribution(symbol, fr_percentile=0.25, base_path=BASE_PATH, save_path=None):
+    """Plot funding rate distribution with target variable threshold.
+
+    Args:
+        symbol: Trading pair symbol
+        fr_percentile: Percentile threshold for extreme negative (default 0.25 = 25th)
+        base_path: Base path for data files
+        save_path: Optional path to save the figure
+    """
+    # Load funding rate data
+    funding_rate_path = base_path / 'raw_funding_rate' / f'{symbol}_funding_rate_20200101_20251130.csv'
+    df_funding = pd.read_csv(funding_rate_path)
+    df_funding['fundingRate'] = df_funding['fundingRate'].astype(float) * 100  # Convert to percentage
+
+    fr = df_funding['fundingRate']
+    threshold = fr.quantile(fr_percentile)
+
+    # Count classes
+    n_extreme = (fr <= threshold).sum()
+    n_normal = (fr > threshold).sum()
+    pct_extreme = n_extreme / len(fr) * 100
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Create histogram with two colors
+    bins = np.linspace(fr.min(), fr.max(), 60)
+
+    # Plot extreme negative (left of threshold)
+    extreme_data = fr[fr <= threshold]
+    normal_data = fr[fr > threshold]
+
+    ax.hist(extreme_data, bins=bins, color='#d62728', alpha=0.7, edgecolor='white',
+            linewidth=0.5, label=f'Extreme Negative (n={n_extreme}, {pct_extreme:.1f}%)')
+    ax.hist(normal_data, bins=bins, color='#2ca02c', alpha=0.7, edgecolor='white',
+            linewidth=0.5, label=f'Normal (n={n_normal}, {100-pct_extreme:.1f}%)')
+
+    # Add threshold line
+    ax.axvline(x=threshold, color='#333333', linestyle='--', linewidth=2.5,
+               label=f'{fr_percentile*100:.0f}th Percentile: {threshold:.4f}%')
+
+    # Add shaded region annotation
+    ymax = ax.get_ylim()[1]
+    ax.fill_betweenx([0, ymax], fr.min(), threshold, color='#d62728', alpha=0.1)
+
+    # Add text annotations
+    ax.text(threshold - 0.1, ymax * 0.85, 'Target = 1\n(Extreme Negative)',
+            ha='right', va='top', fontsize=11, fontweight='bold', color='#d62728',
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='#d62728', alpha=0.9))
+
+    ax.text(threshold + 0.1, ymax * 0.85, 'Target = 0\n(Normal)',
+            ha='left', va='top', fontsize=11, fontweight='bold', color='#2ca02c',
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='#2ca02c', alpha=0.9))
+
+    # Labels and title
+    ax.set_xlabel('Funding Rate (%)', fontsize=12, fontweight='bold', color='#333333')
+    ax.set_ylabel('Frequency', fontsize=12, fontweight='bold', color='#333333')
+    ax.set_title(f'{symbol} - Target Variable Definition\nBinary Classification: Extreme Negative vs Normal',
+                 fontsize=14, fontweight='bold', color='#333333', pad=15)
+
+    # Legend
+    ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+
+    # Styling
+    ax.grid(True, alpha=0.3, linestyle='--', color='#cccccc', axis='y')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#cccccc')
+    ax.spines['bottom'].set_color('#cccccc')
+    ax.tick_params(axis='both', colors='#333333', labelsize=10)
+    ax.set_facecolor('white')
+    fig.patch.set_facecolor('white')
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print summary
+    print(f"\n--- Target Variable Summary ({symbol}) ---")
+    print(f"Total funding events: {len(fr)}")
+    print(f"Threshold ({fr_percentile*100:.0f}th percentile): {threshold:.4f}%")
+    print(f"Extreme Negative (Target=1): {n_extreme} events ({pct_extreme:.1f}%)")
+    print(f"Normal (Target=0): {n_normal} events ({100-pct_extreme:.1f}%)")
+    print(f"Class imbalance ratio: 1:{n_normal/n_extreme:.1f}")
+
+    return fig
+
+
+# %% ============================================================
 # DATA LOADING FUNCTIONS
 # ============================================================
 
@@ -180,7 +1216,7 @@ def merge_all_data(df_futures, df_spot, df_funding):
     return df_merged
 
 
-#%% ============================================================
+# %% ============================================================
 # FEATURE ENGINEERING FUNCTIONS
 # ============================================================
 
@@ -301,7 +1337,7 @@ def calculate_features(df_merged):
     return df
 
 
-#%% ============================================================
+# %% ============================================================
 # ANALYSIS FUNCTIONS (OPTIONAL)
 # ============================================================
 
@@ -532,8 +1568,9 @@ def analyze_funding_rate_distribution(symbol, base_path=BASE_PATH, data_split='a
     pct_negative = n_negative / total_events * 100
 
     # Count extreme negative FR
-    n_extreme_neg_1_5 = (fr * 100 < -1.5).sum()
+    n_extreme_neg_0_5 = (fr * 100 < -0.5).sum()
     n_extreme_neg_1_0 = (fr * 100 < -1.0).sum()
+    n_extreme_neg_1_5 = (fr * 100 < -1.5).sum()
 
     # Calculate percentiles
     p5 = fr.quantile(0.05) * 100
@@ -558,6 +1595,7 @@ def analyze_funding_rate_distribution(symbol, base_path=BASE_PATH, data_split='a
         'p20': p20,
         'p25': p25,
         'p25_is_negative': p25 < 0,
+        'n_extreme_neg_0_5': n_extreme_neg_0_5,
         'n_extreme_neg_1_0': n_extreme_neg_1_0,
         'n_extreme_neg_1_5': n_extreme_neg_1_5
     }
@@ -626,18 +1664,22 @@ def plot_fr_distribution_comparison(df_summary, show_plots=True, title_suffix=''
     if not show_plots or len(df_summary) == 0:
         return
 
+    # Sort by FR < -0.5% count (descending)
+    df_summary = df_summary.sort_values('n_extreme_neg_0_5', ascending=False).reset_index(drop=True)
+
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     title = f'Extreme Negative Funding Rate Events {title_suffix}' if title_suffix else 'Extreme Negative Funding Rate Events'
     fig.suptitle(title, fontsize=14, fontweight='bold')
 
     symbols = df_summary['symbol'].tolist()
 
-    # Plot 1: Extreme Negative FR Count (< -1.0%, < -1.5%)
+    # Plot 1: Extreme Negative FR Count (< -0.5%, < -1.0%, < -1.5%)
     ax1 = axes[0]
     x = np.arange(len(symbols))
-    width = 0.35
-    bars_1_0 = ax1.bar(x - width/2, df_summary['n_extreme_neg_1_0'], width, label='FR < -1.0%', color='salmon', edgecolor='black')
-    bars_1_5 = ax1.bar(x + width/2, df_summary['n_extreme_neg_1_5'], width, label='FR < -1.5%', color='darkred', edgecolor='black')
+    width = 0.25
+    bars_0_5 = ax1.bar(x - width, df_summary['n_extreme_neg_0_5'], width, label='FR < -0.5%', color='lightsalmon', edgecolor='black')
+    bars_1_0 = ax1.bar(x, df_summary['n_extreme_neg_1_0'], width, label='FR < -1.0%', color='salmon', edgecolor='black')
+    bars_1_5 = ax1.bar(x + width, df_summary['n_extreme_neg_1_5'], width, label='FR < -1.5%', color='darkred', edgecolor='black')
     ax1.set_xlabel('Symbol')
     ax1.set_ylabel('Count of Extreme Negative FR Events')
     ax1.set_title('Extreme Negative FR Count by Ticker')
@@ -666,11 +1708,11 @@ def plot_fr_distribution_comparison(df_summary, show_plots=True, title_suffix=''
 
     # Plot 2: Extreme Negative FR Heatmap
     ax2 = axes[1]
-    extreme_cols = ['n_extreme_neg_1_0', 'n_extreme_neg_1_5']
+    extreme_cols = ['n_extreme_neg_0_5', 'n_extreme_neg_1_0', 'n_extreme_neg_1_5']
     extreme_data = df_summary[extreme_cols].values
     im = ax2.imshow(extreme_data, cmap='Reds', aspect='auto')
     ax2.set_xticks(range(len(extreme_cols)))
-    ax2.set_xticklabels(['< -1.0%', '< -1.5%'])
+    ax2.set_xticklabels(['< -0.5%', '< -1.0%', '< -1.5%'])
     ax2.set_yticks(range(len(symbols)))
     ax2.set_yticklabels(symbols)
     ax2.set_title('Extreme Negative FR Counts Heatmap')
@@ -800,40 +1842,59 @@ def compare_funding_rate_spikes(symbol1, symbol2, base_path=BASE_PATH, show_plot
         plt.tight_layout()
         plt.show()
 
-        # Additional plot: Spike events (extreme values)
-        fig2, axes2 = plt.subplots(1, 2, figsize=(16, 5))
+        # Separate Figure: Extreme NEGATIVE FR Events (Below P10) - Combined
+        fig_neg, ax_neg = plt.subplots(figsize=(12, 6))
 
-        # Negative spikes (below P10)
-        ax7 = axes2[0]
         p10_1 = df1['fundingRate'].quantile(0.10)
         p10_2 = df2['fundingRate'].quantile(0.10)
-        spikes1 = df1[df1['fundingRate'] < p10_1]
-        spikes2 = df2[df2['fundingRate'] < p10_2]
+        spikes1_neg = df1[df1['fundingRate'] < p10_1]
+        spikes2_neg = df2[df2['fundingRate'] < p10_2]
 
-        ax7.scatter(spikes1['datetime'], spikes1['fundingRate'], c='blue', alpha=0.6, s=30, label=f'{symbol1} (n={len(spikes1)})')
-        ax7.scatter(spikes2['datetime'], spikes2['fundingRate'], c='red', alpha=0.6, s=30, label=f'{symbol2} (n={len(spikes2)})')
-        ax7.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-        ax7.set_xlabel('Date')
-        ax7.set_ylabel('Funding Rate (%)')
-        ax7.set_title('Extreme Negative FR Events (Below P10)')
-        ax7.legend()
-        ax7.grid(True, alpha=0.3)
+        # Plot both symbols on the same chart
+        ax_neg.scatter(spikes1_neg['datetime'], spikes1_neg['fundingRate'], c='blue', alpha=0.6, s=40, edgecolor='black', linewidth=0.3, label=f'{symbol1} (n={len(spikes1_neg)}, P10={p10_1:.4f}%)')
+        ax_neg.scatter(spikes2_neg['datetime'], spikes2_neg['fundingRate'], c='red', alpha=0.6, s=40, edgecolor='black', linewidth=0.3, label=f'{symbol2} (n={len(spikes2_neg)}, P10={p10_2:.4f}%)')
+        ax_neg.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+        ax_neg.axhline(y=p10_1, color='blue', linestyle=':', alpha=0.5)
+        ax_neg.axhline(y=p10_2, color='red', linestyle=':', alpha=0.5)
+        ax_neg.set_xlabel('Date')
+        ax_neg.set_ylabel('Funding Rate (%)')
+        ax_neg.set_title('Extreme NEGATIVE Funding Rate Events (Below P10)', fontsize=14, fontweight='bold')
+        ax_neg.legend()
+        ax_neg.grid(True, alpha=0.3)
 
-        # Positive spikes (above P90)
-        ax8 = axes2[1]
+        plt.tight_layout()
+        plt.show()
+
+        # Separate Figure: Extreme POSITIVE FR Events (Above P90)
+        fig_pos, axes_pos = plt.subplots(1, 2, figsize=(16, 5))
+        fig_pos.suptitle('Extreme POSITIVE Funding Rate Events (Above P90)', fontsize=14, fontweight='bold')
+
         p90_1 = df1['fundingRate'].quantile(0.90)
         p90_2 = df2['fundingRate'].quantile(0.90)
         spikes1_pos = df1[df1['fundingRate'] > p90_1]
         spikes2_pos = df2[df2['fundingRate'] > p90_2]
 
-        ax8.scatter(spikes1_pos['datetime'], spikes1_pos['fundingRate'], c='blue', alpha=0.6, s=30, label=f'{symbol1} (n={len(spikes1_pos)})')
-        ax8.scatter(spikes2_pos['datetime'], spikes2_pos['fundingRate'], c='red', alpha=0.6, s=30, label=f'{symbol2} (n={len(spikes2_pos)})')
-        ax8.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-        ax8.set_xlabel('Date')
-        ax8.set_ylabel('Funding Rate (%)')
-        ax8.set_title('Extreme Positive FR Events (Above P90)')
-        ax8.legend()
-        ax8.grid(True, alpha=0.3)
+        # Symbol 1 - Positive spikes
+        ax_pos1 = axes_pos[0]
+        ax_pos1.scatter(spikes1_pos['datetime'], spikes1_pos['fundingRate'], c='darkgreen', alpha=0.6, s=40, edgecolor='black', linewidth=0.3)
+        ax_pos1.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+        ax_pos1.axhline(y=p90_1, color='orange', linestyle='--', alpha=0.7, label=f'P90: {p90_1:.4f}%')
+        ax_pos1.set_xlabel('Date')
+        ax_pos1.set_ylabel('Funding Rate (%)')
+        ax_pos1.set_title(f'{symbol1} - Extreme Positive FR (n={len(spikes1_pos)})')
+        ax_pos1.legend()
+        ax_pos1.grid(True, alpha=0.3)
+
+        # Symbol 2 - Positive spikes
+        ax_pos2 = axes_pos[1]
+        ax_pos2.scatter(spikes2_pos['datetime'], spikes2_pos['fundingRate'], c='darkgreen', alpha=0.6, s=40, edgecolor='black', linewidth=0.3)
+        ax_pos2.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+        ax_pos2.axhline(y=p90_2, color='orange', linestyle='--', alpha=0.7, label=f'P90: {p90_2:.4f}%')
+        ax_pos2.set_xlabel('Date')
+        ax_pos2.set_ylabel('Funding Rate (%)')
+        ax_pos2.set_title(f'{symbol2} - Extreme Positive FR (n={len(spikes2_pos)})')
+        ax_pos2.legend()
+        ax_pos2.grid(True, alpha=0.3)
 
         plt.tight_layout()
         plt.show()
@@ -1068,7 +2129,7 @@ def analyze_price_path(df_merged, symbol, window_bars=12, fr_percentile=0.25, te
     }
 
 
-#%% ============================================================
+# %% ============================================================
 # ML PIPELINE FUNCTIONS
 # ============================================================
 
@@ -1353,7 +2414,7 @@ def plot_results(model, X_test, y_test, y_test_pred, y_test_prob, selected_featu
     return optimal_threshold
 
 
-#%% ============================================================
+# %% ============================================================
 # POST-ANALYSIS FUNCTIONS
 # ============================================================
 
@@ -1526,7 +2587,7 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
             entry_price = df_merged.loc[first_signal_time, 'close']
 
             price_pnl_pct = (entry_price - exit_price) / entry_price * 100
-            funding_pnl_pct = -actual_fr * 100
+            funding_pnl_pct = actual_fr * 100  # SHORT pays when FR<0, receives when FR>0
             fees_pct = TRADING_FEE_PCT * 2
             slippage_pct = SLIPPAGE_PCT * 2
             gross_pnl_pct = price_pnl_pct + funding_pnl_pct
@@ -1641,7 +2702,7 @@ def save_model_results(model, scaler, selected_features, results_summary, symbol
     return results_summary
 
 
-#%% ============================================================
+# %% ============================================================
 # MAIN ORCHESTRATOR FUNCTION
 # ============================================================
 
@@ -1784,26 +2845,286 @@ def print_summary_comparison(all_results):
     return df_summary if summary_data else None
 
 
+# %% ============================================================
+# TRAIN/TEST DATE RANGE
+# ============================================================
 
-#%% ============================================================
+def get_train_test_date_range(symbol, train_pct=0.7, base_path=BASE_PATH):
+    """Get train/test date ranges for a symbol.
+
+    Args:
+        symbol: Trading pair symbol (e.g., 'ORCAUSDT')
+        train_pct: Fraction of data for training (default 0.7 = 70%)
+        base_path: Base path for data files
+
+    Returns:
+        dict with date range information
+    """
+    funding_rate_path = base_path / 'raw_funding_rate' / f'{symbol}_funding_rate_20200101_20251130.csv'
+    df_funding = pd.read_csv(funding_rate_path)
+    df_funding['datetime'] = pd.to_datetime(df_funding['fundingDateTime'])
+    df_funding = df_funding.sort_values('datetime')
+
+    total_events = len(df_funding)
+    split_idx = int(total_events * train_pct)
+
+    train_start = df_funding['datetime'].iloc[0]
+    train_end = df_funding['datetime'].iloc[split_idx - 1]
+    test_start = df_funding['datetime'].iloc[split_idx]
+    test_end = df_funding['datetime'].iloc[-1]
+
+    print(f"Symbol: {symbol}")
+    print(f"Total funding events: {total_events}")
+    print(f"\n{train_pct*100:.0f}/{(1-train_pct)*100:.0f} Train/Test Split:")
+    print(f"Training period: {train_start.strftime('%Y-%m-%d')} to {train_end.strftime('%Y-%m-%d')}")
+    print(f"Test period: {test_start.strftime('%Y-%m-%d')} to {test_end.strftime('%Y-%m-%d')}")
+    print(f"\nTrain samples: {split_idx}")
+    print(f"Test samples: {total_events - split_idx}")
+
+    return {
+        'symbol': symbol,
+        'total_events': total_events,
+        'train_pct': train_pct,
+        'train_start': train_start,
+        'train_end': train_end,
+        'test_start': test_start,
+        'test_end': test_end,
+        'train_samples': split_idx,
+        'test_samples': total_events - split_idx
+    }
+
+
+
+required_get_train_test_date_range = False
+if required_get_train_test_date_range:
+# Example usage
+    date_range = get_train_test_date_range('TNSRUSDT')
+
+
+# %%
+required_plot_feature_categories = False
+if required_plot_feature_categories:
+    plot_feature_categories()
+else:
+    pass
+
+
+# %% ============================================================
+# COMPARE FUNDING RATE SPIKES BETWEEN TWO TICKERS
+# ============================================================
+# Run this cell to compare FR distribution between two tickers
+
+fr_comparison = compare_funding_rate_spikes('ORCAUSDT', 'TURBOUSDT')
+
+
+
+
+# %% ============================================================
+# BASIS VS FUNDING RATE CORRELATION CHART
+# ============================================================
+# Run this cell to plot the basis vs funding rate scatter plot
+fr_correlation = False
+if fr_correlation:
+    SYMBOL_BASIS = 'ORCAUSDT'
+    TIMEFRAME_BASIS = '5m'
+
+    # Load and merge data
+    df_futures_basis = load_futures_data(SYMBOL_BASIS, TIMEFRAME_BASIS)
+    df_spot_basis = load_spot_data(SYMBOL_BASIS, TIMEFRAME_BASIS)
+    df_funding_basis = load_funding_rate(SYMBOL_BASIS)
+    df_merged_basis = merge_all_data(df_futures_basis, df_spot_basis, df_funding_basis)
+    df_merged_basis = calculate_features(df_merged_basis)
+
+    # Plot basis vs funding rate
+    plot_basis_vs_funding_rate(df_merged_basis, SYMBOL_BASIS)
+
+# %% ============================================================
+# TARGET VARIABLE DEFINITION CHART
+# ============================================================
+# Run this cell to plot the funding rate distribution with threshold
+
+required_plot_target_variable_distribution = False
+if required_plot_target_variable_distribution:
+    SYMBOL_TARGET = 'RESOLVUSDT'
+    FR_PERCENTILE_TARGET = 0.20  # 25th percentile threshold
+
+    plot_target_variable_distribution(SYMBOL_TARGET, fr_percentile=FR_PERCENTILE_TARGET)
+else:
+    pass
+
+
+# %% ============================================================
+# MARKET CAP FILTERING VISUALIZATION
+# ============================================================
+
+def plot_market_cap_filter(symbols_all, symbols_selected, mcap_threshold=100, save_path=None):
+    """Plot market cap filtering criteria showing which coins were kept vs filtered.
+
+    Args:
+        symbols_all: List of all candidate symbols
+        symbols_selected: List of symbols that passed the filter (mcap < threshold)
+        mcap_threshold: Market cap threshold in millions (default 100M)
+        save_path: Optional path to save the figure
+    """
+    # Identify filtered vs kept
+    symbols_filtered = [s for s in symbols_all if s not in symbols_selected]
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    # Prepare data for horizontal bar chart
+    all_symbols = symbols_filtered + symbols_selected
+    n_filtered = len(symbols_filtered)
+    n_kept = len(symbols_selected)
+
+    # Create bars
+    y_pos = np.arange(len(all_symbols))
+    colors = ['#d62728'] * n_filtered + ['#2ca02c'] * n_kept  # Red for filtered, green for kept
+
+    # Create placeholder values (visual representation)
+    # Filtered coins shown as > threshold, kept coins shown as < threshold
+    bar_values = [mcap_threshold * 1.5] * n_filtered + [mcap_threshold * 0.5] * n_kept
+
+    bars = ax.barh(y_pos, bar_values, color=colors, alpha=0.7, edgecolor='black', linewidth=0.5)
+
+    # Add threshold line
+    ax.axvline(x=mcap_threshold, color='#333333', linestyle='--', linewidth=2.5,
+               label=f'Threshold: ${mcap_threshold}M Market Cap')
+
+    # Labels
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels([s.replace('USDT', '') for s in all_symbols], fontsize=10)
+    ax.set_xlabel('Market Cap Filter Criteria', fontsize=12, fontweight='bold')
+    ax.set_title(f'Coin Selection: Market Cap < ${mcap_threshold}M Filter\n'
+                 f'Filtered Out: {n_filtered} coins | Selected: {n_kept} coins',
+                 fontsize=14, fontweight='bold', pad=15)
+
+    # Add category labels
+    ax.text(mcap_threshold * 1.7, n_filtered / 2, f'FILTERED OUT\n(MCap > ${mcap_threshold}M)\n{n_filtered} coins',
+            ha='center', va='center', fontsize=11, fontweight='bold', color='#d62728',
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='#d62728', alpha=0.9))
+
+    ax.text(mcap_threshold * 0.3, n_filtered + n_kept / 2, f'SELECTED\n(MCap < ${mcap_threshold}M)\n{n_kept} coins',
+            ha='center', va='center', fontsize=11, fontweight='bold', color='#2ca02c',
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='#2ca02c', alpha=0.9))
+
+    # Add horizontal line separating filtered and kept
+    if n_filtered > 0 and n_kept > 0:
+        ax.axhline(y=n_filtered - 0.5, color='gray', linestyle='-', linewidth=1, alpha=0.5)
+
+    # Styling
+    ax.set_xlim(0, mcap_threshold * 2)
+    ax.set_xticklabels([])  # Hide x-axis values since they're illustrative
+    ax.grid(True, alpha=0.3, axis='x', linestyle='--')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.legend(loc='upper right', fontsize=10)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"Figure saved to {save_path}")
+
+    plt.show()
+
+    # Print summary
+    print(f"\n--- Market Cap Filter Summary ---")
+    print(f"Threshold: < ${mcap_threshold}M")
+    print(f"Total candidates: {len(symbols_all)}")
+    print(f"Filtered out (MCap > ${mcap_threshold}M): {n_filtered}")
+    for s in symbols_filtered:
+        print(f"  - {s.replace('USDT', '')}")
+    print(f"Selected (MCap < ${mcap_threshold}M): {n_kept}")
+    for s in symbols_selected:
+        print(f"  + {s.replace('USDT', '')}")
+
+    return fig
+
+
+
+
+# %% ============================================================
+# COMPARE ALL ML MODELS
+# ============================================================
+# Run these cells to compare all ML models across all tickers
+compare_all_models = True
+if compare_all_models:
+    # 1. Compare prediction metrics (Accuracy, Precision, Recall, F1, ROC-AUC)
+    fig_metrics, df_metrics = compare_all_models_metrics()
+
+    # 2. Compare backtest returns (Aggregated Total PnL, Avg PnL, Win Rate)
+    fig_returns, df_returns = compare_all_models_returns()
+
+    # 3. Heatmaps showing performance by Model x Ticker
+    fig_heatmap, df_heatmap = compare_all_models_heatmap()
+
+    # 4. Get trade date ranges
+    date_ranges = get_trade_date_range()
+
+    # 5. Cumulative returns over time by model
+    fig_cumulative, df_cumulative = compare_cumulative_returns()
+
+    # 6. Prediction accuracy comparison
+    fig_pred_acc, df_pred_acc = compare_prediction_accuracy()
+    df_summary = print_model_summary()
+
+
+# %%
+
+
+
+
+# %% ============================================================
+# ML MODEL PERFORMANCE VISUALIZATION
+# ============================================================
+# Plot prediction metrics and backtest returns for any ML model
+# Just change MODEL_NAME to switch between models (e.g., 'LightGBM', 'XGBoost', 'RandomForest')
+
+MODEL_NAME = 'LightGBM'  # <-- Change this to switch models
+MODEL_NAME = 'XGBoost'  # <-- Change this to switch models
+MODEL_NAME = 'KNN'  # <-- Change this to switch models
+MODEL_NAME = 'RandomForest'  # <-- Change this to switch models
+MODEL_NAME = 'SVM'  # <-- Change this to switch models
+MODEL_NAME = 'LSTM'  # <-- Change this to switch models
+MODEL_NAME = 'StackedLSTM'  # <-- Change this to switch models
+MODEL_NAME = 'LogisticRegression'  # <-- Change this to switch models
+MODEL_NAME = 'LogisticLasso'  # <-- Change this to switch models
+MODEL_NAME = 'LogisticRidge'  # <-- Change this to switch models
+MODEL_NAME = 'KNN'  # <-- Change this to switch models
+MODEL_NAME = 'SVM'  # <-- Change this to switch models
+
+# Plot 1: Prediction Metrics (Precision, Recall, F1, ROC-AUC)
+plot_model_prediction_metrics(model_name=MODEL_NAME)
+
+# Plot 2: Backtest Returns (Total PnL, Avg PnL, Win Rate)
+plot_model_backtest_returns(model_name=MODEL_NAME)
+
+
+
+# %% ============================================================
 # FUNDING RATE DISTRIBUTION ANALYSIS
 # ============================================================
 # Run this cell to analyze which tickers are suitable for ML training
 # based on their funding rate distribution
 
-SYMBOLS_FR = [
-    'TAOUSDT', 'SUPERUSDT',
-    'LSKUSDT', 'RESOLVUSDT', 'ORCAUSDT', 'TURBOUSDT',
-    'BANANAUSDT', 'SKLUSDT', 'ACEUSDT', 'AWEUSDT', 'MLNUSDT',
-    'OMUSDT', 'TNSRUSDT'
+# 'ORCAUSDT', "OMUSDT", "AWEUSDT", "SKLUSDT", "LSKUSDT", "MLNUSDT", "RESOLVUSDT"
+SYMBOLS_FR_1 = [
+     'ORCAUSDT', "OMUSDT", "AWEUSDT", "SKLUSDT", "LSKUSDT", "MLNUSDT", "RESOLVUSDT"
 ]
+SYMBOLS_FR_2 = ["TNSRUSDT", "BTCUSDT", "ETHUSDT", "BNBUSDT", "TAOUSDT", "SUPERUSDT", "LSKUSDT", "RESOLVUSDT", "ORCAUSDT", "TURBOUSDT", "LTCUSDT", "BANANAUSDT", "ACEUSDT", "AWEUSDT", "MLNUSDT", "OMUSDT"]
+
+# Plot market cap filter
+plot_market_cap_filter(SYMBOLS_FR_2, SYMBOLS_FR_1, mcap_threshold=100)
+
 
 # Full data analysis
-df_fr_summary_full = analyze_all_tickers_fr_distribution(SYMBOLS_FR, data_split='all')
+df_fr_summary_full = analyze_all_tickers_fr_distribution(SYMBOLS_FR_2, data_split='all')
 plot_fr_distribution_comparison(df_fr_summary_full, show_plots=True, title_suffix='(Full Data)')
 
 # Training data analysis (first 70%)
-df_fr_summary_train = analyze_all_tickers_fr_distribution(SYMBOLS_FR, data_split='train', train_pct=0.7)
+df_fr_summary_train = analyze_all_tickers_fr_distribution(SYMBOLS_FR_2, data_split='train', train_pct=0.7)
 plot_fr_distribution_comparison(df_fr_summary_train, show_plots=True, title_suffix='(Training Data - 70%)')
 
 
@@ -1820,6 +3141,13 @@ SYMBOLS_PATH = [
     'OMUSDT', 'TNSRUSDT'
 ]
 
+SYMBOLS_PATH = [
+     'RESOLVUSDT', 'ORCAUSDT'
+     'MLNUSDT',
+     'TNSRUSDT', 'SKLUSDT', 'LSKUSDT', "AWEUSDT"
+]
+
+SYMBOLS_PATH = ['ORCAUSDT']
 
 # SYMBOLS_PATH = [
 #      'SUPERUSDT',
@@ -1864,12 +3192,3 @@ print(f"\n{'='*80}")
 print(f"COMPLETED: {len([k for k,v in all_price_path_results.items() if 'error' not in v])}/{len(SYMBOLS_PATH)} symbols")
 print(f"{'='*80}")
 
-
-#%% ============================================================
-# COMPARE FUNDING RATE SPIKES BETWEEN TWO TICKERS
-# ============================================================
-# Run this cell to compare FR distribution between two tickers
-
-fr_comparison = compare_funding_rate_spikes('ORCAUSDT', 'TURBOUSDT')
-
-# %%

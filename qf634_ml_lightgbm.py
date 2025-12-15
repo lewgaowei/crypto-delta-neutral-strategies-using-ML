@@ -1,8 +1,20 @@
-#%% [markdown]
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: title,incorrectly_encoded_metadata,-all
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.17.1
+# ---
+
+# %% [markdown]
 # Funding Rate Direction Prediction using Machine Learning
 # This script predicts whether the next funding rate will be positive or negative
 
-#%% Imports
+# %% Imports
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -22,13 +34,14 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.svm import SVC
 from sklearn.feature_selection import RFECV
 from lightgbm import LGBMClassifier
+import shap
 import joblib
 
 # Visualization
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-#%% Constants
+# %% Constants
 BASE_PATH = Path(__file__).parent
 
 FEATURE_COLS = [
@@ -64,7 +77,7 @@ FEATURE_COLS = [
     'hour_of_day', 'day_of_week'
 ]
 
-#%% ============================================================
+# %% ============================================================
 # DATA LOADING FUNCTIONS
 # ============================================================
 
@@ -180,7 +193,7 @@ def merge_all_data(df_futures, df_spot, df_funding):
     return df_merged
 
 
-#%% ============================================================
+# %% ============================================================
 # FEATURE ENGINEERING FUNCTIONS
 # ============================================================
 
@@ -301,7 +314,7 @@ def calculate_features(df_merged):
     return df
 
 
-#%% ============================================================
+# %% ============================================================
 # ANALYSIS FUNCTIONS (OPTIONAL)
 # ============================================================
 
@@ -726,7 +739,7 @@ def analyze_price_path(df_merged, symbol, window_bars=12, fr_percentile=0.25, te
     }
 
 
-#%% ============================================================
+# %% ============================================================
 # ML PIPELINE FUNCTIONS
 # ============================================================
 
@@ -868,6 +881,123 @@ def run_feature_selection(X_train, y_train, random_state=42):
     print(f"Selected features: {selected_features}")
 
     return selected_features, rfecv, class_weight_ratio
+
+
+def run_shap_feature_selection(X_train, y_train, top_n=15, random_state=42, show_plot=True):
+    """Select best features based on SHAP values.
+
+    Args:
+        X_train: Training features
+        y_train: Training targets
+        top_n: Number of top features to select
+        random_state: Random seed for reproducibility
+        show_plot: Whether to display SHAP summary plot
+
+    Returns:
+        selected_features: List of top N feature names
+        shap_importance_df: DataFrame with feature importance scores
+        model: Trained LightGBM model
+    """
+    print("\n" + "="*60)
+    print("SHAP-BASED FEATURE SELECTION")
+    print("="*60)
+
+    # Print class distribution
+    n_class_0 = (y_train == 0).sum()
+    n_class_1 = (y_train == 1).sum()
+    print(f"Class 0 count: {n_class_0}")
+    print(f"Class 1 count: {n_class_1}")
+
+    if n_class_1 == 0:
+        raise ValueError("No class 1 samples in training data! Check fr_percentile or data.")
+
+    class_weight_ratio = n_class_0 / n_class_1
+    print(f"Class weight ratio: 1:{class_weight_ratio:.2f}")
+
+    # Train LightGBM model
+    print("\nTraining LightGBM model for SHAP analysis...")
+    model = LGBMClassifier(
+        n_estimators=200,
+        max_depth=6,
+        learning_rate=0.1,
+        scale_pos_weight=class_weight_ratio,
+        random_state=random_state,
+        verbose=-1,
+        n_jobs=-1
+    )
+    model.fit(X_train, y_train)
+
+    # Compute SHAP values
+    print("Computing SHAP values (this may take a moment)...")
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_train)
+
+    # For binary classification, shap_values is a list [class_0, class_1]
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]  # Use class 1 (positive class)
+
+    # Calculate mean absolute SHAP value for each feature
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+
+    # Create importance DataFrame
+    shap_importance_df = pd.DataFrame({
+        'feature': X_train.columns,
+        'mean_abs_shap': mean_abs_shap
+    }).sort_values('mean_abs_shap', ascending=False).reset_index(drop=True)
+
+    # Select top N features
+    selected_features = shap_importance_df['feature'].head(top_n).tolist()
+
+    print(f"\nTop {top_n} features by SHAP importance:")
+    print("-" * 50)
+    for i, row in shap_importance_df.head(top_n).iterrows():
+        print(f"{i+1:2d}. {row['feature']:30s} | SHAP: {row['mean_abs_shap']:.4f}")
+
+    if show_plot:
+        # Professional white background SHAP importance chart
+        top_df = shap_importance_df.head(top_n).copy()
+        top_df = top_df.iloc[::-1]  # Reverse for horizontal bar (highest at top)
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Create gradient colors (blue shades)
+        n_bars = len(top_df)
+        colors = plt.cm.Blues(np.linspace(0.4, 0.9, n_bars))
+
+        # Create horizontal bars
+        bars = ax.barh(range(n_bars), top_df['mean_abs_shap'].values, color=colors, height=0.7, edgecolor='#333333', linewidth=0.5)
+
+        # Add SHAP scores as text on bars
+        max_val = top_df['mean_abs_shap'].max()
+        for i, (bar, score) in enumerate(zip(bars, top_df['mean_abs_shap'].values)):
+            ax.text(score + max_val * 0.02, bar.get_y() + bar.get_height()/2,
+                   f'{score:.4f}', ha='left', va='center', fontsize=9,
+                   color='#333333', fontweight='bold')
+
+        # Customize axes
+        ax.set_yticks(range(n_bars))
+        ax.set_yticklabels(top_df['feature'].values, fontsize=10, color='#333333')
+        ax.set_xlabel('Mean |SHAP Value|', fontsize=12, color='#333333', fontweight='bold')
+        ax.set_title(f'Top {top_n} Features by SHAP Importance', fontsize=14, color='#333333', fontweight='bold', pad=15)
+
+        # Clean professional styling
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#cccccc')
+        ax.spines['bottom'].set_color('#cccccc')
+        ax.tick_params(axis='x', colors='#333333')
+        ax.tick_params(axis='y', colors='#333333')
+        ax.set_facecolor('white')
+        fig.patch.set_facecolor('white')
+        ax.grid(axis='x', alpha=0.3, color='#cccccc', linestyle='-')
+        ax.set_xlim(0, max_val * 1.2)
+
+        plt.tight_layout()
+        plt.show()
+
+    print(f"\nSelected {len(selected_features)} features based on SHAP values")
+
+    return selected_features, shap_importance_df, model, class_weight_ratio
 
 
 def run_hyperparameter_tuning(X_train, y_train, class_weight_ratio, random_state=42):
@@ -1037,7 +1167,7 @@ def plot_results(model, X_test, y_test, y_test_pred, y_test_prob, selected_featu
     return optimal_threshold
 
 
-#%% ============================================================
+# %% ============================================================
 # POST-ANALYSIS FUNCTIONS
 # ============================================================
 
@@ -1222,10 +1352,11 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
             entry_price = df_merged.loc[first_signal_time, 'close']
 
             price_pnl_pct = (entry_price - exit_price) / entry_price * 100
-            funding_pnl_pct = -actual_fr * 100
+            # Funding rate avoided by closing position 1 min before funding event
+            # funding_pnl_pct = actual_fr * 100
             fees_pct = TRADING_FEE_PCT * 2
             slippage_pct = SLIPPAGE_PCT * 2
-            gross_pnl_pct = price_pnl_pct + funding_pnl_pct
+            gross_pnl_pct = price_pnl_pct  # No funding rate - closed early to avoid
             net_pnl_pct = gross_pnl_pct - fees_pct - slippage_pct
             hold_time_min = (funding_time - first_signal_time).total_seconds() / 60
 
@@ -1238,7 +1369,6 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
                 'actual_fr': actual_fr,
                 'actual_extreme': actual_extreme,
                 'price_pnl_pct': price_pnl_pct,
-                'funding_pnl_pct': funding_pnl_pct,
                 'fees_pct': fees_pct,
                 'slippage_pct': slippage_pct,
                 'gross_pnl_pct': gross_pnl_pct,
@@ -1263,7 +1393,7 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
         # Display sample trades
         print(f"\n--- SAMPLE TRADES (First 10) ---")
         display_cols = ['funding_time', 'entry_time', 'hold_time_min', 'entry_price', 'exit_price',
-                        'actual_fr', 'price_pnl_pct', 'funding_pnl_pct', 'net_pnl_pct', 'correct_prediction']
+                        'actual_fr', 'price_pnl_pct', 'net_pnl_pct', 'correct_prediction']
         print(df_trades[display_cols].head(10).to_string(index=False))
 
         if show_plots:
@@ -1290,12 +1420,12 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
 
             ax3 = axes[1, 0]
             colors = ['green' if c else 'red' for c in df_trades['correct_prediction']]
-            ax3.scatter(df_trades['price_pnl_pct'], df_trades['funding_pnl_pct'], c=colors, alpha=0.6, s=50)
+            ax3.scatter(df_trades['price_pnl_pct'], df_trades['net_pnl_pct'], c=colors, alpha=0.6, s=50)
             ax3.axhline(y=0, color='black', linestyle='--', alpha=0.3)
             ax3.axvline(x=0, color='black', linestyle='--', alpha=0.3)
             ax3.set_xlabel('Price PnL (%)')
-            ax3.set_ylabel('Funding PnL (%)')
-            ax3.set_title(f'{symbol} - Price vs Funding PnL')
+            ax3.set_ylabel('Net PnL (%)')
+            ax3.set_title(f'{symbol} - Price vs Net PnL')
             ax3.grid(True, alpha=0.3)
 
             ax4 = axes[1, 1]
@@ -1318,12 +1448,24 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
     return df_trades
 
 
-def save_model_results(model, scaler, selected_features, results_summary, symbol, base_path=BASE_PATH):
-    """Save model and results."""
+def save_model_results(model, scaler, selected_features, results_summary, symbol, df_trades=None, model_name='LightGBM', base_path=BASE_PATH):
+    """Save model, results, and trades.
+
+    Args:
+        model: Trained model
+        scaler: Feature scaler
+        selected_features: List of selected features
+        results_summary: Dict with model metrics
+        symbol: Trading pair symbol
+        df_trades: DataFrame with backtest trades (optional)
+        model_name: Name of the model for file naming (default 'LightGBM')
+        base_path: Base path for saving files
+    """
     print("\n" + "="*60)
     print("SAVING MODEL & RESULTS")
     print("="*60)
 
+    # Save model files
     try:
         joblib.dump(model, base_path / f'{symbol}_lgbm_model.joblib')
         joblib.dump(scaler, base_path / f'{symbol}_scaler.joblib')
@@ -1334,14 +1476,71 @@ def save_model_results(model, scaler, selected_features, results_summary, symbol
     except Exception as e:
         print(f"Warning: Could not save model files: {e}")
 
+    # Create results folder
+    results_path = base_path / 'results'
+    results_path.mkdir(exist_ok=True)
+
+    # Save trades to CSV
+    if df_trades is not None and len(df_trades) > 0:
+        trades_filename = f'{symbol}_{model_name}_trades.csv'
+        df_trades.to_csv(results_path / trades_filename, index=False)
+        print(f"Trades saved to results/{trades_filename}")
+
+    # Save/append summary to comparison CSV
+    summary_filename = 'backtest_comparison_summary.csv'
+    summary_path = results_path / summary_filename
+
+    # Prepare summary row
+    summary_row = {
+        'symbol': symbol,
+        'model': model_name,
+        'feature_selection': results_summary.get('feature_selection_method', 'N/A'),
+        'n_features': results_summary.get('n_features_selected', 0),
+        'train_samples': results_summary.get('train_samples', 0),
+        'test_samples': results_summary.get('test_samples', 0),
+        'test_accuracy': results_summary.get('test_accuracy', 0),
+        'test_precision': results_summary.get('test_precision', 0),
+        'test_recall': results_summary.get('test_recall', 0),
+        'test_f1': results_summary.get('test_f1', 0),
+        'test_roc_auc': results_summary.get('test_roc_auc', 0),
+        'n_trades': results_summary.get('n_trades', 0),
+        'total_pnl_pct': results_summary.get('total_pnl', 0),
+        'avg_pnl_pct': results_summary.get('avg_pnl', 0),
+        'win_rate': results_summary.get('win_rate', 0),
+        'prediction_accuracy': df_trades['correct_prediction'].mean() if df_trades is not None and len(df_trades) > 0 else 0,
+        'timestamp': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    df_summary_row = pd.DataFrame([summary_row])
+
+    # Update existing or append new (avoid duplicates for same symbol+model)
+    if summary_path.exists():
+        df_existing = pd.read_csv(summary_path)
+        # Check if entry for this symbol+model already exists
+        mask = (df_existing['symbol'] == symbol) & (df_existing['model'] == model_name)
+        if mask.any():
+            # Update existing entry
+            df_existing = df_existing[~mask]  # Remove old entry
+            df_combined = pd.concat([df_existing, df_summary_row], ignore_index=True)
+            print(f"Updated existing entry for {symbol} ({model_name}) in {summary_filename}")
+        else:
+            # Append new entry
+            df_combined = pd.concat([df_existing, df_summary_row], ignore_index=True)
+            print(f"Appended new entry for {symbol} ({model_name}) to {summary_filename}")
+    else:
+        df_combined = df_summary_row
+        print(f"Created new {summary_filename} with {symbol} ({model_name})")
+
+    df_combined.to_csv(summary_path, index=False)
+
     return results_summary
 
 
-#%% ============================================================
+# %% ============================================================
 # MAIN ORCHESTRATOR FUNCTION
 # ============================================================
 
-def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.25, signal_window=6, run_analysis=True, show_plots=True):
+def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.25, signal_window=6, feature_selection_method='shap', run_analysis=True, show_plots=True):
     """Run the full ML pipeline for a single symbol.
 
     Args:
@@ -1350,6 +1549,7 @@ def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.2
         random_state: Random seed for reproducibility
         fr_percentile: Percentile threshold for "extreme negative" FR (default 0.25 = 25th percentile)
         signal_window: Number of bars before funding to look for signals in backtest (default 6 = 30min for 5m bars)
+        feature_selection_method: 'shap' (default, faster) or 'rfe' for feature selection
         run_analysis: Whether to run interval/correlation analysis
         show_plots: Whether to display plots
     """
@@ -1381,22 +1581,29 @@ def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.2
     X_train_scaled, X_test_scaled, y_train, y_test, scaler, df_train, df_test = prepare_train_test_split(df_ml)
 
     # 7. Feature Selection
-    selected_features, rfecv, class_weight_ratio = run_feature_selection(X_train_scaled, y_train, random_state)
+    if feature_selection_method.lower() == 'rfe':
+        print(f"\nUsing RFE for feature selection...")
+        selected_features, rfecv, class_weight_ratio = run_feature_selection(X_train_scaled, y_train, random_state)
+    else:  # default to 'shap'
+        print(f"\nUsing SHAP for feature selection...")
+        selected_features, shap_importance_df, shap_model, class_weight_ratio = run_shap_feature_selection(
+            X_train_scaled, y_train, top_n=15, random_state=random_state, show_plot=show_plots
+        )
 
-    X_train_rfe = X_train_scaled[selected_features]
-    X_test_rfe = X_test_scaled[selected_features]
+    X_train_selected = X_train_scaled[selected_features]
+    X_test_selected = X_test_scaled[selected_features]
 
     # 8. Hyperparameter Tuning
-    best_model, grid_search = run_hyperparameter_tuning(X_train_rfe, y_train, class_weight_ratio, random_state)
+    best_model, grid_search = run_hyperparameter_tuning(X_train_selected, y_train, class_weight_ratio, random_state)
 
     # 9. Evaluate Model
     y_test_pred, y_test_prob, y_train_pred, y_train_prob = evaluate_model(
-        best_model, X_train_rfe, X_test_rfe, y_train, y_test
+        best_model, X_train_selected, X_test_selected, y_train, y_test
     )
 
     # 10. Plot Results
     if show_plots:
-        optimal_threshold = plot_results(best_model, X_test_rfe, y_test, y_test_pred, y_test_prob, selected_features, symbol)
+        optimal_threshold = plot_results(best_model, X_test_selected, y_test, y_test_pred, y_test_prob, selected_features, symbol)
     else:
         optimal_threshold = 0.5
 
@@ -1411,12 +1618,13 @@ def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.2
     # 13. Compile Results
     results_summary = {
         'symbol': symbol,
+        'feature_selection_method': feature_selection_method,
         'fr_threshold': fr_threshold,
         'n_features_selected': len(selected_features),
         'selected_features': selected_features,
         'best_params': grid_search.best_params_,
-        'train_samples': len(X_train_rfe),
-        'test_samples': len(X_test_rfe),
+        'train_samples': len(X_train_selected),
+        'test_samples': len(X_test_selected),
         'test_accuracy': accuracy_score(y_test, y_test_pred),
         'test_precision': precision_score(y_test, y_test_pred),
         'test_recall': recall_score(y_test, y_test_pred),
@@ -1428,8 +1636,8 @@ def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.2
         'win_rate': (df_trades['net_pnl_pct'] > 0).mean() if len(df_trades) > 0 else 0
     }
 
-    # 14. Save Model
-    save_model_results(best_model, scaler, selected_features, results_summary, symbol)
+    # 14. Save Model & Results
+    save_model_results(best_model, scaler, selected_features, results_summary, symbol, df_trades=df_trades, model_name='LightGBM')
 
     print("\n" + "="*60)
     print(f"PIPELINE COMPLETE FOR {symbol}")
@@ -1488,8 +1696,8 @@ def print_summary_comparison(all_results):
 # Run this cell to analyze average price path around funding events
 # for a single ticker without running the full ML pipeline
 
-required_analysis = True
-SYMBOL_PATH = 'BANANAUSDT'
+required_analysis = False
+SYMBOL_PATH = 'OMUSDT'
 
 if required_analysis:
     TIMEFRAME_PATH = '5m'
@@ -1507,65 +1715,87 @@ if required_analysis:
     result = analyze_price_path(df_merged, SYMBOL_PATH, window_bars=WINDOW_BARS, fr_percentile=FR_PERCENTILE_PATH, test_size=TEST_SIZE_PATH, show_plots=True)
 
 
-#%% ============================================================
+# %% ============================================================
 # RUN SINGLE SYMBOL
 # ============================================================
-SYMBOLS_PATH = [
-    'LSKUSDT', 'RESOLVUSDT', 'ORCAUSDT',
-     'SKLUSDT', 'AWEUSDT',
-      'TNSRUSDT'
-]
+run_single_symbol_required = False
+if run_single_symbol_required:
+    TIMEFRAME = '5m'
+    RANDOM_STATE = 42
+    FR_PERCENTILE = 0.25  # 0.25 = 25th percentile, 0.10 = 10th percentile, etc.
+    SIGNAL_WINDOW = 6
+    FEATURE_SELECTION = 'shap'  # 'shap' (default, faster) or 'rfe'
 
-TIMEFRAME = '5m'
-RANDOM_STATE = 42
-FR_PERCENTILE = 0.15  # 0.25 = 25th percentile, 0.10 = 10th percentile, etc.
-SIGNAL_WINDOW = 6
+    results = run_full_pipeline(
+        symbol=SYMBOL_PATH,
+        timeframe=TIMEFRAME,
+        random_state=RANDOM_STATE,
+        fr_percentile=FR_PERCENTILE,
+        signal_window=SIGNAL_WINDOW,
+        feature_selection_method=FEATURE_SELECTION,
+        run_analysis=True,
+        show_plots=True
+    )
 
-results = run_full_pipeline(
-    symbol=SYMBOL_PATH,
-    timeframe=TIMEFRAME,
-    random_state=RANDOM_STATE,
-    fr_percentile=FR_PERCENTILE,
-    signal_window=SIGNAL_WINDOW,
-    run_analysis=True,
-    show_plots=True
-)
-
-#%% ============================================================
+# %% ============================================================
 # RUN MULTIPLE SYMBOLS
 # ============================================================
 
-# SYMBOLS = [
-#     'TAOUSDT', 'SUPERUSDT',
-#     'LSKUSDT', 'RESOLVUSDT', 'ORCAUSDT', 'TURBOUSDT',
-#     'BANANAUSDT', 'SKLUSDT', 'ACEUSDT', 'AWEUSDT', 'MLNUSDT',
-#     'OMUSDT', 'TNSRUSDT'
-# ]
+# Per-symbol configuration: {symbol: (fr_percentile, signal_window)}
+# Default values used if symbol not in config
+SYMBOL_CONFIG = {
+    'ORCAUSDT':    (0.25, 6),
+    'AWEUSDT':     (0.25, 6),
+    'LSKUSDT':     (0.10, 6),
+    'MLNUSDT':     (0.25, 6),
+    'RESOLVUSDT':  (0.25, 8),
+}
 
-# TIMEFRAME = '5m'
-# RANDOM_STATE = 42
-# FR_PERCENTILE = 0.25  # 0.25 = 25th percentile, 0.10 = 10th percentile, etc.
+# Default values for symbols not in SYMBOL_CONFIG
+DEFAULT_FR_PERCENTILE = 0.25
+DEFAULT_SIGNAL_WINDOW = 6
 
-# all_results = {}
-# for symbol in SYMBOLS:
-#     print(f"\n{'='*80}")
-#     print(f"PROCESSING {symbol}")
-#     print(f"{'='*80}")
+SYMBOLS = list(SYMBOL_CONFIG.keys())
+TIMEFRAME = '5m'
+RANDOM_STATE = 42
+FEATURE_SELECTION = 'shap'
 
-#     results = run_full_pipeline(
-#         symbol=symbol,
-#         timeframe=TIMEFRAME,
-#         random_state=RANDOM_STATE,
-#         fr_percentile=FR_PERCENTILE,
-#         run_analysis=False,
-#         show_plots=False
-#     )
-#     all_results[symbol] = results
+# Store all results
+all_results = {}
 
-#%% ============================================================
-# COMPARE RESULTS ACROSS SYMBOLS
-# ============================================================
+for symbol in SYMBOLS:
+    # Get per-symbol config or use defaults
+    fr_percentile, signal_window = SYMBOL_CONFIG.get(
+        symbol, (DEFAULT_FR_PERCENTILE, DEFAULT_SIGNAL_WINDOW)
+    )
 
-# df_summary = print_summary_comparison(all_results)
+    print(f"\n{'='*80}")
+    print(f"PROCESSING {symbol} (FR_PERCENTILE={fr_percentile}, SIGNAL_WINDOW={signal_window})")
+    print('='*80)
+    try:
+        result = run_full_pipeline(
+            symbol=symbol,
+            timeframe=TIMEFRAME,
+            random_state=RANDOM_STATE,
+            fr_percentile=fr_percentile,
+            signal_window=signal_window,
+            feature_selection_method=FEATURE_SELECTION,
+            run_analysis=False,  # Skip analysis for faster batch processing
+            show_plots=False     # Skip plots for faster batch processing
+        )
+        all_results[symbol] = result
+    except Exception as e:
+        print(f"ERROR processing {symbol}: {e}")
+        all_results[symbol] = {'error': str(e)}
 
+# %%
+# Print comparison summary
+print_summary_comparison(all_results)
+
+# Load and display results from CSV
+results_csv = pd.read_csv(BASE_PATH / 'results' / 'backtest_comparison_summary.csv')
+print("\n--- Results from CSV ---")
+print(results_csv.to_string(index=False))
+
+# %%
 

@@ -1,8 +1,20 @@
-#%% [markdown]
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: incorrectly_encoded_metadata,title,-all
+#     formats: ipynb,py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.17.1
+# ---
+
+# %% [markdown]
 # Funding Rate Direction Prediction using Machine Learning
 # This script predicts whether the next funding rate will be positive or negative
 
-#%% Imports
+# %% Imports
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -28,7 +40,7 @@ import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-#%% Constants
+# %% Constants
 BASE_PATH = Path(__file__).parent
 
 FEATURE_COLS = [
@@ -64,7 +76,7 @@ FEATURE_COLS = [
     'hour_of_day', 'day_of_week'
 ]
 
-#%% ============================================================
+# %% ============================================================
 # DATA LOADING FUNCTIONS
 # ============================================================
 
@@ -180,7 +192,7 @@ def merge_all_data(df_futures, df_spot, df_funding):
     return df_merged
 
 
-#%% ============================================================
+# %% ============================================================
 # FEATURE ENGINEERING FUNCTIONS
 # ============================================================
 
@@ -301,7 +313,7 @@ def calculate_features(df_merged):
     return df
 
 
-#%% ============================================================
+# %% ============================================================
 # ANALYSIS FUNCTIONS (OPTIONAL)
 # ============================================================
 
@@ -726,7 +738,7 @@ def analyze_price_path(df_merged, symbol, window_bars=12, fr_percentile=0.25, te
     }
 
 
-#%% ============================================================
+# %% ============================================================
 # ML PIPELINE FUNCTIONS
 # ============================================================
 
@@ -878,7 +890,7 @@ def run_hyperparameter_tuning(X_train, y_train, class_weight_ratio, random_state
 
     
     param_grid_fast = {
-        'n_estimators': [50, 100, 200],
+        'n_estimators': [50, 100],
         'max_depth': [3, 5],
         'learning_rate': [0.05, 0.1],
         'min_child_weight': [1, 3],
@@ -1037,7 +1049,7 @@ def plot_results(model, X_test, y_test, y_test_pred, y_test_prob, selected_featu
     return optimal_threshold
 
 
-#%% ============================================================
+# %% ============================================================
 # POST-ANALYSIS FUNCTIONS
 # ============================================================
 
@@ -1222,10 +1234,11 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
             entry_price = df_merged.loc[first_signal_time, 'close']
 
             price_pnl_pct = (entry_price - exit_price) / entry_price * 100
-            funding_pnl_pct = -actual_fr * 100
+            # Funding rate avoided by closing position 1 min before funding event
+            # funding_pnl_pct = -actual_fr * 100
             fees_pct = TRADING_FEE_PCT * 2
             slippage_pct = SLIPPAGE_PCT * 2
-            gross_pnl_pct = price_pnl_pct + funding_pnl_pct
+            gross_pnl_pct = price_pnl_pct  # No funding rate - closed early to avoid
             net_pnl_pct = gross_pnl_pct - fees_pct - slippage_pct
             hold_time_min = (funding_time - first_signal_time).total_seconds() / 60
 
@@ -1238,7 +1251,6 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
                 'actual_fr': actual_fr,
                 'actual_extreme': actual_extreme,
                 'price_pnl_pct': price_pnl_pct,
-                'funding_pnl_pct': funding_pnl_pct,
                 'fees_pct': fees_pct,
                 'slippage_pct': slippage_pct,
                 'gross_pnl_pct': gross_pnl_pct,
@@ -1263,7 +1275,7 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
         # Display sample trades
         print(f"\n--- SAMPLE TRADES (First 10) ---")
         display_cols = ['funding_time', 'entry_time', 'hold_time_min', 'entry_price', 'exit_price',
-                        'actual_fr', 'price_pnl_pct', 'funding_pnl_pct', 'net_pnl_pct', 'correct_prediction']
+                        'actual_fr', 'price_pnl_pct', 'net_pnl_pct', 'correct_prediction']
         print(df_trades[display_cols].head(10).to_string(index=False))
 
         if show_plots:
@@ -1290,12 +1302,12 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
 
             ax3 = axes[1, 0]
             colors = ['green' if c else 'red' for c in df_trades['correct_prediction']]
-            ax3.scatter(df_trades['price_pnl_pct'], df_trades['funding_pnl_pct'], c=colors, alpha=0.6, s=50)
+            ax3.scatter(df_trades['price_pnl_pct'], df_trades['net_pnl_pct'], c=colors, alpha=0.6, s=50)
             ax3.axhline(y=0, color='black', linestyle='--', alpha=0.3)
             ax3.axvline(x=0, color='black', linestyle='--', alpha=0.3)
             ax3.set_xlabel('Price PnL (%)')
-            ax3.set_ylabel('Funding PnL (%)')
-            ax3.set_title(f'{symbol} - Price vs Funding PnL')
+            ax3.set_ylabel('Net PnL (%)')
+            ax3.set_title(f'{symbol} - Price vs Net PnL')
             ax3.grid(True, alpha=0.3)
 
             ax4 = axes[1, 1]
@@ -1318,12 +1330,24 @@ def run_backtest(df_merged, df_test_with_pred, symbol, fr_threshold=None, fr_per
     return df_trades
 
 
-def save_model_results(model, scaler, selected_features, results_summary, symbol, base_path=BASE_PATH):
-    """Save model and results."""
+def save_model_results(model, scaler, selected_features, results_summary, symbol, df_trades=None, model_name='XGBoost', base_path=BASE_PATH):
+    """Save model, results, and trades.
+
+    Args:
+        model: Trained model
+        scaler: Feature scaler
+        selected_features: List of selected features
+        results_summary: Dict with model metrics
+        symbol: Trading pair symbol
+        df_trades: DataFrame with backtest trades (optional)
+        model_name: Name of the model for file naming (default 'XGBoost')
+        base_path: Base path for saving files
+    """
     print("\n" + "="*60)
     print("SAVING MODEL & RESULTS")
     print("="*60)
 
+    # Save model files
     try:
         joblib.dump(model, base_path / f'{symbol}_xgb_model.joblib')
         joblib.dump(scaler, base_path / f'{symbol}_scaler.joblib')
@@ -1334,10 +1358,67 @@ def save_model_results(model, scaler, selected_features, results_summary, symbol
     except Exception as e:
         print(f"Warning: Could not save model files: {e}")
 
+    # Create results folder
+    results_path = base_path / 'results'
+    results_path.mkdir(exist_ok=True)
+
+    # Save trades to CSV
+    if df_trades is not None and len(df_trades) > 0:
+        trades_filename = f'{symbol}_{model_name}_trades.csv'
+        df_trades.to_csv(results_path / trades_filename, index=False)
+        print(f"Trades saved to results/{trades_filename}")
+
+    # Save/append summary to comparison CSV
+    summary_filename = 'backtest_comparison_summary.csv'
+    summary_path = results_path / summary_filename
+
+    # Prepare summary row
+    summary_row = {
+        'symbol': symbol,
+        'model': model_name,
+        'feature_selection': results_summary.get('feature_selection_method', 'N/A'),
+        'n_features': results_summary.get('n_features_selected', 0),
+        'train_samples': results_summary.get('train_samples', 0),
+        'test_samples': results_summary.get('test_samples', 0),
+        'test_accuracy': results_summary.get('test_accuracy', 0),
+        'test_precision': results_summary.get('test_precision', 0),
+        'test_recall': results_summary.get('test_recall', 0),
+        'test_f1': results_summary.get('test_f1', 0),
+        'test_roc_auc': results_summary.get('test_roc_auc', 0),
+        'n_trades': results_summary.get('n_trades', 0),
+        'total_pnl_pct': results_summary.get('total_pnl', 0),
+        'avg_pnl_pct': results_summary.get('avg_pnl', 0),
+        'win_rate': results_summary.get('win_rate', 0),
+        'prediction_accuracy': df_trades['correct_prediction'].mean() if df_trades is not None and len(df_trades) > 0 else 0,
+        'timestamp': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    df_summary_row = pd.DataFrame([summary_row])
+
+    # Update existing or append new (avoid duplicates for same symbol+model)
+    if summary_path.exists():
+        df_existing = pd.read_csv(summary_path)
+        # Check if entry for this symbol+model already exists
+        mask = (df_existing['symbol'] == symbol) & (df_existing['model'] == model_name)
+        if mask.any():
+            # Update existing entry
+            df_existing = df_existing[~mask]  # Remove old entry
+            df_combined = pd.concat([df_existing, df_summary_row], ignore_index=True)
+            print(f"Updated existing entry for {symbol} ({model_name}) in {summary_filename}")
+        else:
+            # Append new entry
+            df_combined = pd.concat([df_existing, df_summary_row], ignore_index=True)
+            print(f"Appended new entry for {symbol} ({model_name}) to {summary_filename}")
+    else:
+        df_combined = df_summary_row
+        print(f"Created new {summary_filename} with {symbol} ({model_name})")
+
+    df_combined.to_csv(summary_path, index=False)
+
     return results_summary
 
 
-#%% ============================================================
+# %% ============================================================
 # MAIN ORCHESTRATOR FUNCTION
 # ============================================================
 
@@ -1429,7 +1510,7 @@ def run_full_pipeline(symbol, timeframe='5m', random_state=42, fr_percentile=0.2
     }
 
     # 14. Save Model
-    save_model_results(best_model, scaler, selected_features, results_summary, symbol)
+    save_model_results(best_model, scaler, selected_features, results_summary, symbol, df_trades=df_trades, model_name='XGBoost')
 
     print("\n" + "="*60)
     print(f"PIPELINE COMPLETE FOR {symbol}")
@@ -1489,7 +1570,7 @@ def print_summary_comparison(all_results):
 # for a single ticker without running the full ML pipeline
 
 required_analysis = True
-SYMBOL_PATH = 'OMUSDT'
+SYMBOL_PATH = 'ORCAUSDT'
 
 if required_analysis:
     TIMEFRAME_PATH = '5m'
@@ -1507,7 +1588,7 @@ if required_analysis:
     result = analyze_price_path(df_merged, SYMBOL_PATH, window_bars=WINDOW_BARS, fr_percentile=FR_PERCENTILE_PATH, test_size=TEST_SIZE_PATH, show_plots=True)
 
 
-#%% ============================================================
+# %% ============================================================
 # RUN SINGLE SYMBOL
 # ============================================================
 SYMBOLS_PATH = [
@@ -1519,7 +1600,7 @@ SYMBOLS_PATH = [
 TIMEFRAME = '5m'
 RANDOM_STATE = 42
 FR_PERCENTILE = 0.25  # 0.25 = 25th percentile, 0.10 = 10th percentile, etc.
-SIGNAL_WINDOW = 6
+SIGNAL_WINDOW = 8
 
 results = run_full_pipeline(
     symbol=SYMBOL_PATH,
@@ -1531,41 +1612,66 @@ results = run_full_pipeline(
     show_plots=True
 )
 
-#%% ============================================================
+# %% ============================================================
 # RUN MULTIPLE SYMBOLS
 # ============================================================
 
-# SYMBOLS = [
-#     'TAOUSDT', 'SUPERUSDT',
-#     'LSKUSDT', 'RESOLVUSDT', 'ORCAUSDT', 'TURBOUSDT',
-#     'BANANAUSDT', 'SKLUSDT', 'ACEUSDT', 'AWEUSDT', 'MLNUSDT',
-#     'OMUSDT', 'TNSRUSDT'
-# ]
+# Per-symbol configuration: {symbol: (fr_percentile, signal_window)}
+# Default values used if symbol not in config
+SYMBOL_CONFIG = {
+    'ORCAUSDT':    (0.25, 6),
+    'AWEUSDT':     (0.25, 6),
+    'LSKUSDT':     (0.10, 6),
+    'MLNUSDT':     (0.25, 6),
+    'RESOLVUSDT':  (0.25, 8),
+}
 
-# TIMEFRAME = '5m'
-# RANDOM_STATE = 42
-# FR_PERCENTILE = 0.25  # 0.25 = 25th percentile, 0.10 = 10th percentile, etc.
+# Default values for symbols not in SYMBOL_CONFIG
+DEFAULT_FR_PERCENTILE = 0.25
+DEFAULT_SIGNAL_WINDOW = 6
 
-# all_results = {}
-# for symbol in SYMBOLS:
-#     print(f"\n{'='*80}")
-#     print(f"PROCESSING {symbol}")
-#     print(f"{'='*80}")
+SYMBOLS = list(SYMBOL_CONFIG.keys())
+TIMEFRAME = '5m'
+RANDOM_STATE = 42
 
-#     results = run_full_pipeline(
-#         symbol=symbol,
-#         timeframe=TIMEFRAME,
-#         random_state=RANDOM_STATE,
-#         fr_percentile=FR_PERCENTILE,
-#         run_analysis=False,
-#         show_plots=False
-#     )
-#     all_results[symbol] = results
+# Store all results
+all_results = {}
 
-#%% ============================================================
+for symbol in SYMBOLS:
+    # Get per-symbol config or use defaults
+    fr_percentile, signal_window = SYMBOL_CONFIG.get(
+        symbol, (DEFAULT_FR_PERCENTILE, DEFAULT_SIGNAL_WINDOW)
+    )
+
+    print(f"\n{'='*80}")
+    print(f"PROCESSING {symbol} (FR_PERCENTILE={fr_percentile}, SIGNAL_WINDOW={signal_window})")
+    print('='*80)
+    try:
+        result = run_full_pipeline(
+            symbol=symbol,
+            timeframe=TIMEFRAME,
+            random_state=RANDOM_STATE,
+            fr_percentile=fr_percentile,
+            signal_window=signal_window,
+            run_analysis=False,  # Skip analysis for faster batch processing
+            show_plots=False     # Skip plots for faster batch processing
+        )
+        all_results[symbol] = result
+    except Exception as e:
+        print(f"ERROR processing {symbol}: {e}")
+        all_results[symbol] = {'error': str(e)}
+
 # COMPARE RESULTS ACROSS SYMBOLS
 # ============================================================
 
-# df_summary = print_summary_comparison(all_results)
+# Print comparison summary
+print_summary_comparison(all_results)
+
+# Load and display results from CSV
+results_csv = pd.read_csv(BASE_PATH / 'results' / 'backtest_comparison_summary.csv')
+print("\n--- Results from CSV ---")
+print(results_csv.to_string(index=False))
+
+# %%
 
 
